@@ -1,0 +1,9 @@
+[package]
+name = "cashweb-keyserver"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bitcoinsuite-core = { path = "../../bitcoinsuite/bitcoinsuite-core" }
+bitcoinsuite-error = { path = "../../bitcoinsuite/bitcoinsuite-error" }
+bitcoinsuite-bitcoind = { path = "../../bitcoinsuite/bitcoinsuite-bitcoind" }

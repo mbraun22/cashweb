@@ -1,0 +1,130 @@
+name: CI
+
+on: [push]
+
+jobs:
+  ci-check:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Make bin directory
+      run: |
+        mkdir bin
+        echo "$(pwd)/bin" >> $GITHUB_PATH
+      shell: bash
+
+    - name: Checkout cashweb repository
+      uses: actions/checkout@v2
+      with:
+        path: cashweb
+
+    - name: Checkout bitcoinsuite repository
+      uses: actions/checkout@v2
+      with:
+        path: bitcoinsuite
+        repository: LogosFoundation/bitcoinsuite
+        ref: master
+
+    - name: Checkout cargo-make repository
+      uses: actions/checkout@v2
+      with:
+        path: cargo-make
+        repository: sagiegurari/cargo-make
+        ref: 0.35.8
+
+    - name: Checkout flatbuffers repository
+      uses: actions/checkout@v2
+      with:
+        path: flatbuffers
+        repository: google/flatbuffers
+        ref: v2.0.0
+
+    - name: Cache flatc
+      uses: actions/cache@v2
+      with:
+        path: |
+          flatbuffers/build
+        key: ${{ runner.os }}-flatbuffers-ninja-v2.0.0
+        restore-keys: |
+          ${{ runner.os }}-flatbuffers-ninja-
+
+    - name: Install ninja
+      uses: seanmiddleditch/gha-setup-ninja@master
+      with:
+        version: 1.10.2
+
+    - name: Build flatc if not cached
+      working-directory: ./flatbuffers
+      run: |
+        if [ ! -d "build" ]; then
+          mkdir build
+          cd build
+          cmake -G "Ninja" -DCMAKE_BUILD_TYPE=Release ..
+          ninja
+          cd ..
+        fi
+        cp ./build/flatc ../bin/
+      shell: bash
+
+    - name: Set-up Rust toolchain
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+
+    - name: Get Rust version for cache
+      id: rust-version
+      run: |
+        echo "::set-output name=rust_version::$(rustc --version)"
+      shell: bash
+
+    - name: Cache Rust dependencies
+      uses: actions/cache@v2
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          ./target
+        key: ${{ runner.os }}-cargodeps-${{steps.rust-version.outputs.rust_version}}-${{ hashFiles('bitcoinsuite/Cargo.lock') }}-${{ hashFiles('cashweb/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-cargodeps-${{steps.rust-version.outputs.rust_version}}-${{ hashFiles('bitcoinsuite/Cargo.lock') }}-
+          ${{ runner.os }}-cargodeps-${{steps.rust-version.outputs.rust_version}}-
+          ${{ runner.os }}-cargodeps-
+
+    - name: Build and install cargo make
+      working-directory: ./cargo-make
+      run: |
+        CARGO_TARGET_DIR=$(pwd)/../target cargo install --path . --target-dir $(pwd)/../target
+      shell: bash
+
+    - name: Make bitcoinsuite nng
+      working-directory: ./bitcoinsuite
+      run: |
+        cargo make --cwd bitcoinsuite-bitcoind-nng generate-fb
+
+    - name: Make bitcoinsuite libraries & download nodes
+      working-directory: ./bitcoinsuite
+      run: |
+        CARGO_TARGET_DIR=$(pwd)/../target cargo make
+
+    - name: Check format cashweb libraries with rustfmt
+      working-directory: ./cashweb
+      run: |
+        cargo fmt --check
+
+    - name: Lint cashweb libraries with clippy
+      working-directory: ./cashweb
+      run: |
+        cargo clippy
+
+    - name: Make cashweb libraries
+      working-directory: ./cashweb
+      run: |
+        CARGO_TARGET_DIR=$(pwd)/../target cargo make
+
+    - name: Build cashweb keyserver
+      working-directory: ./cashweb
+      run: |
+        CARGO_TARGET_DIR=$(pwd)/../target \
+          RUSTFLAGS="-D warnings" \
+          cargo build -p cashweb-keyserver-exe --release
+        cp ../target/release/cashweb-keyserver-exe ../bin/
