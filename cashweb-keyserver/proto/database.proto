@@ -1,0 +1,10 @@
+syntax = "proto3";
+package cashweb.database;
+
+// Metadata entry for the DB.
+message MetadataEntry {
+    // Serialized authorized payload, signed by the address.
+    bytes serialized_auth_payload = 1;
+    // HTTP Authorization token
+    bytes token = 2;
+}

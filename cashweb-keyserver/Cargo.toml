@@ -6,4 +6,26 @@ edition = "2021"
 [dependencies]
 bitcoinsuite-core = { path = "../../bitcoinsuite/bitcoinsuite-core" }
 bitcoinsuite-error = { path = "../../bitcoinsuite/bitcoinsuite-error" }
-bitcoinsuite-bitcoind = { path = "../../bitcoinsuite/bitcoinsuite-bitcoind" }
+
+# Protobuf (de)serialization
+prost = "0.9"
+
+# Fast embedded key-value database
+rocksdb = "0.18"
+
+# Derive error enums
+thiserror = "1.0"
+
+# Hex en-/decoding
+hex = "0.4"
+
+[build-dependencies]
+# Build Protobuf structs
+prost-build = "0.9"
+
+[dev-dependencies]
+# assert_eq! and assert_ne! with colored diffs
+pretty_assertions = "1.0"
+
+# Temporary directories, automatically removed
+tempdir = "0.3"
