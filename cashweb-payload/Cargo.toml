@@ -1,0 +1,12 @@
+[package]
+name = "cashweb-payload"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Protobuf (de)serialization
+prost = "0.10"
+
+[build-dependencies]
+# Build Protobuf structs
+prost-build = "0.10"

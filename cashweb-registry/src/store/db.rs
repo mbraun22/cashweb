@@ -14,8 +14,8 @@ pub(crate) const CF_METADATA: &str = "metadata";
 
 pub(crate) type CF = rocksdb::ColumnFamily;
 
-/// Keyserver database.
-/// Owns the underlying rocksdb::DB instance, so might need to be put behind an Arc.
+/// Registry database.
+/// Owns the underlying rocksdb::DB instance.
 pub struct Db {
     db: rocksdb::DB,
 }
@@ -45,7 +45,7 @@ impl Db {
         Self::open_with_cfs(path, cfs)
     }
 
-    /// Returns `DbMetadata`, allowing access to keyserver metadata.
+    /// Returns `DbMetadata`, allowing access to registry metadata.
     pub fn metadata(&self) -> DbMetadata<'_> {
         DbMetadata::new(self)
     }
@@ -101,7 +101,7 @@ mod tests {
     #[test]
     fn test_db_debug() -> Result<()> {
         let _ = bitcoinsuite_error::install();
-        let tempdir = tempdir::TempDir::new("cashweb-keyserver-store--db-debug")?;
+        let tempdir = tempdir::TempDir::new("cashweb-registry-store--db-debug")?;
         let db = Db::open(tempdir.path().join("db.rocksdb"))?;
         assert_eq!(format!("{:?}", db), "Db { .. }");
         Ok(())

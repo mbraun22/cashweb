@@ -1,5 +1,5 @@
 [package]
-name = "cashweb-keyserver"
+name = "cashweb-registry"
 version = "0.1.0"
 edition = "2021"
 
@@ -7,8 +7,10 @@ edition = "2021"
 bitcoinsuite-core = { path = "../../bitcoinsuite/bitcoinsuite-core" }
 bitcoinsuite-error = { path = "../../bitcoinsuite/bitcoinsuite-error" }
 
+cashweb-payload = { path = "../cashweb-payload" }
+
 # Protobuf (de)serialization
-prost = "0.9"
+prost = "0.10"
 
 # Fast embedded key-value database
 rocksdb = "0.18"
@@ -18,10 +20,6 @@ thiserror = "1.0"
 
 # Hex en-/decoding
 hex = "0.4"
-
-[build-dependencies]
-# Build Protobuf structs
-prost-build = "0.9"
 
 [dev-dependencies]
 # assert_eq! and assert_ne! with colored diffs

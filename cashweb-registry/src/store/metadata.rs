@@ -3,24 +3,22 @@
 use std::fmt::Debug;
 
 use bitcoinsuite_error::{ErrorMeta, Result, WrapErr};
+use cashweb_payload::proto::SignedPayload;
 use rocksdb::ColumnFamilyDescriptor;
 use thiserror::Error;
 
-use crate::{
-    proto,
-    store::{
-        db::{Db, CF, CF_METADATA},
-        pubkeyhash::PubKeyHash,
-    },
+use crate::store::{
+    db::{Db, CF, CF_METADATA},
+    pubkeyhash::PubKeyHash,
 };
 
-/// Allows access to keyserver metadata.
+/// Allows access to registry metadata.
 pub struct DbMetadata<'a> {
     db: &'a Db,
     cf_metadata: &'a CF,
 }
 
-/// Errors indicating some keyserver metadata error.
+/// Errors indicating some registry metadata error.
 #[derive(Debug, Error, ErrorMeta, PartialEq, Eq)]
 pub enum DbMetadataError {
     /// Database contains an invalid protobuf MetadataEntry.
@@ -32,7 +30,7 @@ pub enum DbMetadataError {
 use self::DbMetadataError::*;
 
 impl<'a> DbMetadata<'a> {
-    /// Create a new `DbMetadata` instance.
+    /// Create a new [`DbMetadata`] instance.
     pub fn new(db: &'a Db) -> Self {
         let cf_metadata = db
             .cf(CF_METADATA)
@@ -40,8 +38,8 @@ impl<'a> DbMetadata<'a> {
         DbMetadata { db, cf_metadata }
     }
 
-    /// Store a `proto::MetadataEntry` in the db.
-    pub fn put(&self, pkh: &PubKeyHash, metadata_entry: &proto::MetadataEntry) -> Result<()> {
+    /// Store a [`SignedPayload`] in the db.
+    pub fn put(&self, pkh: &PubKeyHash, metadata_entry: &SignedPayload) -> Result<()> {
         use prost::Message;
         self.db.put(
             self.cf_metadata,
@@ -50,14 +48,14 @@ impl<'a> DbMetadata<'a> {
         )
     }
 
-    /// Retrieve a `proto::MetadataEntry` from the db.
-    pub fn get(&self, pkh: &PubKeyHash) -> Result<Option<proto::MetadataEntry>> {
+    /// Retrieve a [`SignedPayload`] from the db.
+    pub fn get(&self, pkh: &PubKeyHash) -> Result<Option<SignedPayload>> {
         use prost::Message;
         let serialized_entry = match self.db.get(self.cf_metadata, &pkh.to_storage_bytes())? {
             Some(serialized_entry) => serialized_entry,
             None => return Ok(None),
         };
-        let entry = proto::MetadataEntry::decode(serialized_entry.as_ref())
+        let entry = SignedPayload::decode(serialized_entry.as_ref())
             .wrap_err_with(|| CannotDecodeMetadataEntry(hex::encode(&serialized_entry)))?;
         Ok(Some(entry))
     }
@@ -76,21 +74,19 @@ impl Debug for DbMetadata<'_> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        proto,
-        store::{
-            db::{Db, CF_METADATA},
-            metadata::DbMetadataError,
-            pubkeyhash::{PkhAlgorithm, PubKeyHash},
-        },
+    use crate::store::{
+        db::{Db, CF_METADATA},
+        metadata::DbMetadataError,
+        pubkeyhash::{PkhAlgorithm, PubKeyHash},
     };
     use bitcoinsuite_error::Result;
+    use cashweb_payload::proto::{signed_payload::SignatureScheme, BurnTx, SignedPayload};
     use pretty_assertions::assert_eq;
 
     #[test]
     fn test_db_metadata() -> Result<()> {
         let _ = bitcoinsuite_error::install();
-        let tempdir = tempdir::TempDir::new("cashweb-keyserver-store--metadata")?;
+        let tempdir = tempdir::TempDir::new("cashweb-registry-store--metadata")?;
         let db = Db::open(tempdir.path().join("db.rocksdb"))?;
         let pkh = PubKeyHash::new(PkhAlgorithm::Sha256Ripemd160, [7; 20].into())?;
 
@@ -98,9 +94,17 @@ mod tests {
         assert_eq!(db.metadata().get(&pkh)?, None);
 
         // Add entry and check
-        let entry = proto::MetadataEntry {
-            serialized_auth_payload: vec![1, 2, 3, 4],
-            token: vec![5, 6, 7],
+        let entry = SignedPayload {
+            public_key: vec![1, 2, 3, 4],
+            signature: vec![4, 5, 6, 7, 8],
+            scheme: SignatureScheme::Ecdsa.into(),
+            payload: vec![9, 10, 11, 12],
+            payload_digest: vec![13, 14, 15, 16, 17],
+            burn_amount: 1_337_000_000_000,
+            burn_txs: vec![BurnTx {
+                tx: vec![18, 19, 20, 21, 22, 23],
+                burn_index: 24,
+            }],
         };
         db.metadata().put(&pkh, &entry)?;
         assert_eq!(db.metadata().get(&pkh)?, Some(entry));
@@ -122,7 +126,7 @@ mod tests {
     #[test]
     fn test_db_metadata_debug() -> Result<()> {
         let _ = bitcoinsuite_error::install();
-        let tempdir = tempdir::TempDir::new("cashweb-keyserver-store--metadata-debug")?;
+        let tempdir = tempdir::TempDir::new("cashweb-registry-store--metadata-debug")?;
         let db = Db::open(tempdir.path().join("db.rocksdb"))?;
         assert_eq!(format!("{:?}", db.metadata()), "DbMetadata { .. }");
         Ok(())
