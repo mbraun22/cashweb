@@ -3,7 +3,7 @@
 use std::fmt::Debug;
 
 use bitcoinsuite_error::{ErrorMeta, Result, WrapErr};
-use cashweb_payload::proto::SignedPayload;
+use cashweb_payload::proto;
 use rocksdb::ColumnFamilyDescriptor;
 use thiserror::Error;
 
@@ -39,7 +39,7 @@ impl<'a> DbMetadata<'a> {
     }
 
     /// Store a [`SignedPayload`] in the db.
-    pub fn put(&self, pkh: &PubKeyHash, metadata_entry: &SignedPayload) -> Result<()> {
+    pub fn put(&self, pkh: &PubKeyHash, metadata_entry: &proto::SignedPayload) -> Result<()> {
         use prost::Message;
         self.db.put(
             self.cf_metadata,
@@ -49,13 +49,13 @@ impl<'a> DbMetadata<'a> {
     }
 
     /// Retrieve a [`SignedPayload`] from the db.
-    pub fn get(&self, pkh: &PubKeyHash) -> Result<Option<SignedPayload>> {
+    pub fn get(&self, pkh: &PubKeyHash) -> Result<Option<proto::SignedPayload>> {
         use prost::Message;
         let serialized_entry = match self.db.get(self.cf_metadata, &pkh.to_storage_bytes())? {
             Some(serialized_entry) => serialized_entry,
             None => return Ok(None),
         };
-        let entry = SignedPayload::decode(serialized_entry.as_ref())
+        let entry = proto::SignedPayload::decode(serialized_entry.as_ref())
             .wrap_err_with(|| CannotDecodeMetadataEntry(hex::encode(&serialized_entry)))?;
         Ok(Some(entry))
     }
@@ -80,7 +80,7 @@ mod tests {
         pubkeyhash::{PkhAlgorithm, PubKeyHash},
     };
     use bitcoinsuite_error::Result;
-    use cashweb_payload::proto::{signed_payload::SignatureScheme, BurnTx, SignedPayload};
+    use cashweb_payload::{payload::SignatureScheme, proto};
     use pretty_assertions::assert_eq;
 
     #[test]
@@ -94,16 +94,16 @@ mod tests {
         assert_eq!(db.metadata().get(&pkh)?, None);
 
         // Add entry and check
-        let entry = SignedPayload {
-            public_key: vec![1, 2, 3, 4],
-            signature: vec![4, 5, 6, 7, 8],
-            scheme: SignatureScheme::Ecdsa.into(),
+        let entry = proto::SignedPayload {
+            pubkey: vec![1, 2, 3, 4],
+            sig: vec![4, 5, 6, 7, 8],
+            sig_scheme: SignatureScheme::Ecdsa.into(),
             payload: vec![9, 10, 11, 12],
-            payload_digest: vec![13, 14, 15, 16, 17],
+            payload_hash: vec![13, 14, 15, 16, 17],
             burn_amount: 1_337_000_000_000,
-            burn_txs: vec![BurnTx {
+            burn_txs: vec![proto::BurnTx {
                 tx: vec![18, 19, 20, 21, 22, 23],
-                burn_index: 24,
+                burn_idx: 24,
             }],
         };
         db.metadata().put(&pkh, &entry)?;

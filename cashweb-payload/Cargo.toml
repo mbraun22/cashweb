@@ -4,9 +4,24 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+bitcoinsuite-core = { path = "../../bitcoinsuite/bitcoinsuite-core" }
+bitcoinsuite-error = { path = "../../bitcoinsuite/bitcoinsuite-error" }
+
+# Hex en-/decoding
+hex = "0.4"
+
 # Protobuf (de)serialization
 prost = "0.10"
+
+# Derive error enums
+thiserror = "1.0"
 
 [build-dependencies]
 # Build Protobuf structs
 prost-build = "0.10"
+
+[dev-dependencies]
+bitcoinsuite-ecc-secp256k1 = { path = "../../bitcoinsuite/bitcoinsuite-ecc-secp256k1" }
+
+# assert_eq! and assert_ne! with colored diffs
+pretty_assertions = "1.0"

@@ -5,9 +5,11 @@ package cashweb.payload;
 // providing a standard structure for covering a payload with a signature.
 message SignedPayload {
     // The public key associated with the signature.
-    bytes public_key = 1;
+    bytes pubkey = 1;
+
     // The signature (signed for public key) covering the payload.
-    bytes signature = 2;
+    bytes sig = 2;
+
     // Supported signature schemes. Default is Schnorr, but can be ECDSA.
     enum SignatureScheme {
         // Schnorr signature scheme.
@@ -15,15 +17,20 @@ message SignedPayload {
         // Elliptic curve digital signature scheme.
         ECDSA = 1;
     }
+
     // The signature scheme used for signing.
-    SignatureScheme scheme = 3;
+    SignatureScheme sig_scheme = 3;
+
     // The payload covered by the signature.
     bytes payload = 4;
-    // The SHA256 digest of the payload.
-    bytes payload_digest = 5;
+
+    // The SHA256 hash of the payload.
+    bytes payload_hash = 5;
+
     // Net amount of XPI burned in the transactions associated with this
     // signed payload.
     int64 burn_amount = 6;
+
     // Transactions which committed to the payload_digest.
     repeated BurnTx burn_txs = 7;
 }
@@ -38,5 +45,5 @@ message BurnTx {
 
     // Index of the OP_RETURN output in `tx` which contains the commitment for
     // the signed payload.
-    uint32 burn_index = 2;
+    uint32 burn_idx = 2;
 }
