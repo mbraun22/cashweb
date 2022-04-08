@@ -14,11 +14,12 @@ pub use crate::proto::signed_payload::SignatureScheme;
 /// SignedPayload provides integrity, authentication, and non-repuditation by
 /// providing a standard structure for covering a payload with a signature.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SignedPayload {
+pub struct SignedPayload<T> {
+    pub(crate) payload: T,
     pub(crate) pubkey: [u8; PUBKEY_LENGTH],
     pub(crate) sig: Bytes,
     pub(crate) sig_scheme: SignatureScheme,
-    pub(crate) payload: Bytes,
+    pub(crate) payload_raw: Bytes,
     pub(crate) payload_hash: Sha256,
     pub(crate) burn_amount: i64,
     pub(crate) burn_txs: Vec<BurnTx>,
@@ -60,6 +61,11 @@ pub enum ParseSignedPayloadError {
         actual: Sha256,
     },
 
+    /// Payload could not be parsed as the Protobuf message `T`.
+    #[invalid_client_input()]
+    #[error("Parsing payload as Protobuf failed: {0}")]
+    ParsingPayloadFailed(prost::DecodeError),
+
     /// Parsing `tx` in [`proto::BurnTx`] failed.
     #[invalid_client_input()]
     #[error("Parsing burn tx failed: {0}")]
@@ -88,7 +94,7 @@ pub enum ParseSignedPayloadError {
 
 use self::ParseSignedPayloadError::*;
 
-impl SignedPayload {
+impl<T: prost::Message + Default> SignedPayload<T> {
     /// Parse and validate a [`proto::SignedPayload`].
     ///
     /// * `payload_hash` has to be empty or set to the hash of `payload`.
@@ -101,14 +107,14 @@ impl SignedPayload {
             .as_slice()
             .try_into()
             .map_err(|_| InvalidPubKeyLen(signed_payload.pubkey.len()))?;
-        let payload = Bytes::from(signed_payload.payload);
-        let expected_payload_hash = Sha256::digest(payload.clone());
+        let payload_raw = Bytes::from(signed_payload.payload);
+        let expected_payload_hash = Sha256::digest(payload_raw.clone());
 
         // Assign or check the payload_hash
         let payload_hash = match signed_payload.payload_hash.len() {
             // If it's unset, set it to the expected hash
             0 => {
-                if payload.is_empty() {
+                if payload_raw.is_empty() {
                     return Err(PayloadHashAndPayloadEmpty.into());
                 }
                 expected_payload_hash
@@ -127,6 +133,8 @@ impl SignedPayload {
                 expected_payload_hash
             }
         };
+
+        let payload = T::decode(&mut payload_raw.as_ref()).map_err(ParsingPayloadFailed)?;
 
         // Parse `BurnTx`s
         let burn_txs = signed_payload
@@ -164,11 +172,12 @@ impl SignedPayload {
         }
 
         Ok(SignedPayload {
+            payload,
             pubkey,
             sig: signed_payload.sig.into(),
             sig_scheme: SignatureScheme::from_i32(signed_payload.sig_scheme)
                 .ok_or(UnknownSignatureScheme(signed_payload.sig_scheme))?,
-            payload,
+            payload_raw,
             payload_hash,
             burn_amount: actual_burn_amount,
             burn_txs,
@@ -181,7 +190,7 @@ impl SignedPayload {
             pubkey: self.pubkey.to_vec(),
             sig: self.sig.to_vec(),
             sig_scheme: self.sig_scheme.into(),
-            payload: self.payload.to_vec(),
+            payload: self.payload_raw.to_vec(),
             payload_hash: self.payload_hash.as_slice().to_vec(),
             burn_amount: self.burn_amount,
             burn_txs: self
@@ -210,8 +219,13 @@ impl SignedPayload {
         self.sig_scheme
     }
 
-    /// Payload that's being signed.
-    pub fn payload(&self) -> &Bytes {
+    /// Raw payload bytes that are being signed.
+    pub fn payload_raw(&self) -> &Bytes {
+        &self.payload_raw
+    }
+
+    /// Decoded payload that's being signed.
+    pub fn payload(&self) -> &T {
         &self.payload
     }
 
@@ -253,6 +267,7 @@ mod tests {
     use bitcoinsuite_core::{BitcoinCode, Bytes, Hashed, Script, Sha256, TxOutput, UnhashedTx};
     use bitcoinsuite_error::Result;
     use pretty_assertions::assert_eq;
+    use prost::Message;
 
     use crate::{
         payload::ParseSignedPayloadError,
@@ -260,16 +275,28 @@ mod tests {
         proto,
     };
 
+    #[derive(Clone, PartialEq, prost::Message)]
+    struct MockProto {
+        #[prost(bytes = "vec", tag = "1")]
+        a: prost::alloc::vec::Vec<u8>,
+        #[prost(int64, tag = "2")]
+        b: i64,
+    }
+
     #[test]
     fn test_parse_signed_payload() -> Result<()> {
         let payload_err = |payload_proto: proto::SignedPayload| -> Result<ParseSignedPayloadError> {
-            SignedPayload::from_proto(payload_proto)
+            SignedPayload::<MockProto>::from_proto(payload_proto)
                 .unwrap_err()
                 .downcast()
         };
         let pubkey = [2; 33];
-        let payload = Bytes::from([1, 2, 3, 4]);
-        let payload_hash = Sha256::digest(payload.clone());
+        let payload = MockProto {
+            a: b"hello world!".to_vec(),
+            b: 1234,
+        };
+        let payload_raw = Bytes::from(payload.encode_to_vec());
+        let payload_hash = Sha256::digest(payload_raw.clone());
 
         let mut signed_payload = proto::SignedPayload::default();
         assert_eq!(
@@ -284,15 +311,25 @@ mod tests {
             ParseSignedPayloadError::PayloadHashAndPayloadEmpty,
         );
 
+        // A payload that's not a protobuf of MockProto will fail
+        signed_payload.payload = vec![77, 88, 99];
+        assert_eq!(
+            payload_err(signed_payload.clone())?,
+            ParseSignedPayloadError::ParsingPayloadFailed(prost::DecodeError::new(
+                "buffer underflow"
+            )),
+        );
+
         // With non-empty payload but empty payload_hash, we get the payload_hash prepared for us
-        signed_payload.payload = payload.to_vec();
+        signed_payload.payload = payload_raw.to_vec();
         assert_eq!(
             SignedPayload::from_proto(signed_payload.clone())?,
             SignedPayload {
+                payload: payload.clone(),
                 pubkey,
                 sig: Bytes::new(),
                 sig_scheme: SignatureScheme::Schnorr,
-                payload: payload.clone(),
+                payload_raw: payload_raw.clone(),
                 payload_hash: payload_hash.clone(),
                 burn_amount: 0,
                 burn_txs: vec![],
@@ -323,10 +360,11 @@ mod tests {
             assert_eq!(
                 result,
                 SignedPayload {
+                    payload: payload.clone(),
                     pubkey,
                     sig: Bytes::new(),
                     sig_scheme: SignatureScheme::Schnorr,
-                    payload: payload.clone(),
+                    payload_raw: payload_raw.clone(),
                     payload_hash: payload_hash.clone(),
                     burn_amount: 0,
                     burn_txs: vec![],
@@ -370,10 +408,11 @@ mod tests {
         assert_eq!(
             SignedPayload::from_proto(signed_payload.clone())?,
             SignedPayload {
+                payload: payload.clone(),
                 pubkey,
                 sig: Bytes::new(),
                 sig_scheme: SignatureScheme::Schnorr,
-                payload: payload.clone(),
+                payload_raw: payload_raw.clone(),
                 payload_hash: payload_hash.clone(),
                 burn_amount: 1_000_000,
                 burn_txs: vec![BurnTx {
@@ -399,10 +438,11 @@ mod tests {
         assert_eq!(
             SignedPayload::from_proto(signed_payload.clone())?,
             SignedPayload {
+                payload: payload.clone(),
                 pubkey,
                 sig: Bytes::new(),
                 sig_scheme: SignatureScheme::Schnorr,
-                payload: payload.clone(),
+                payload_raw: payload_raw.clone(),
                 payload_hash: payload_hash.clone(),
                 burn_amount: 1_000_000,
                 burn_txs: vec![BurnTx {
@@ -447,10 +487,11 @@ mod tests {
             assert_eq!(
                 result,
                 SignedPayload {
+                    payload,
                     pubkey,
                     sig: Bytes::new(),
                     sig_scheme: SignatureScheme::Schnorr,
-                    payload,
+                    payload_raw,
                     payload_hash,
                     burn_amount: 1_234_567,
                     burn_txs: vec![

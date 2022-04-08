@@ -88,7 +88,7 @@ pub enum ValidateSignedPayloadError {
 
 use self::ValidateSignedPayloadError::*;
 
-impl SignedPayload {
+impl<T> SignedPayload<T> {
     /// Validates that the [`proto::SignedPayload`] burns the claimed amount to the corrent commitments.
     ///
     /// Burn output script must look like this:
@@ -190,11 +190,11 @@ mod tests {
     #[test]
     fn test_verify_signed_payload() -> Result<()> {
         let ecc = EccSecp256k1::default();
-        let verify_err = |payload: &SignedPayload| -> Result<ValidateSignedPayloadError> {
+        let verify_err = |payload: &SignedPayload<()>| -> Result<ValidateSignedPayloadError> {
             payload.verify(&ecc).unwrap_err().downcast()
         };
-        let payload = Bytes::from([1, 2, 3, 4]);
-        let payload_hash = Sha256::digest(payload.clone());
+        let payload_raw = Bytes::from([1, 2, 3, 4]);
+        let payload_hash = Sha256::digest(payload_raw.clone());
         let pubkey = [0x77; PUBKEY_LENGTH];
         let commitment_hash = Sha256::digest(
             [
@@ -216,10 +216,11 @@ mod tests {
         )?;
 
         let mut signed_payload = SignedPayload {
+            payload: (),
             pubkey,
             sig: Bytes::new(),
             sig_scheme: SignatureScheme::Schnorr,
-            payload,
+            payload_raw,
             payload_hash: payload_hash.clone(),
             burn_amount: 0,
             burn_txs: vec![],
