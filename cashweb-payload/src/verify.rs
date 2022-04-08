@@ -89,7 +89,7 @@ pub enum ValidateSignedPayloadError {
 use self::ValidateSignedPayloadError::*;
 
 impl<T> SignedPayload<T> {
-    /// Validates that the [`proto::SignedPayload`] burns the claimed amount to the corrent commitments.
+    /// Validates that the [`crate::proto::SignedPayload`] burns the claimed amount to the corrent commitments.
     ///
     /// Burn output script must look like this:
     /// `OP_RETURN <lokad_id: STMP> <version: 1> <commitment: 32 bytes>`
@@ -124,6 +124,21 @@ impl<T> SignedPayload<T> {
 
         Ok(())
     }
+}
+
+/// Build the burn [`bitcoinsuite_core::Script`] for the given pubkey and payload hash.
+pub fn build_commitment_script(pubkey_raw: [u8; PUBKEY_LENGTH], payload_hash: &Sha256) -> Script {
+    let commitment = calc_commitment(pubkey_raw, payload_hash);
+    Script::from_ops(
+        vec![
+            Op::Code(0x6a),
+            Op::Push(4, COMMITMENT_LOKAD_ID.into()),
+            Op::Code(COMMITMENT_VERSION_OPCODE),
+            Op::Push(COMMITMENT_LEN, commitment.as_slice().into()),
+        ]
+        .into_iter(),
+    )
+    .unwrap()
 }
 
 fn parse_commitment(script: &Script) -> Result<Sha256> {

@@ -52,6 +52,19 @@ impl PkhAlgorithm {
             PkhAlgorithm::Sha256Ripemd160 => ShaRmd160::size(),
         }
     }
+
+    /// Create a [`PubKeyHash`] by hashing `pubkey` with this hashing algorithm.
+    pub fn hash_pubkey(self, pubkey: [u8; 33]) -> PubKeyHash {
+        match self {
+            PkhAlgorithm::Sha256Ripemd160 => PubKeyHash {
+                algorithm: self,
+                hash: ShaRmd160::digest(pubkey.into())
+                    .byte_array()
+                    .to_vec()
+                    .into(),
+            },
+        }
+    }
 }
 
 impl PubKeyHash {
@@ -67,6 +80,16 @@ impl PubKeyHash {
             .into());
         }
         Ok(PubKeyHash { algorithm, hash })
+    }
+
+    /// Hashing algorithm used by this [`PubKeyHash`].
+    pub fn algorithm(&self) -> PkhAlgorithm {
+        self.algorithm
+    }
+
+    /// Bytes of the hash of this [`PubKeyHash`].
+    pub fn hash(&self) -> &Bytes {
+        &self.hash
     }
 
     pub(crate) fn to_storage_bytes(&self) -> Bytes {

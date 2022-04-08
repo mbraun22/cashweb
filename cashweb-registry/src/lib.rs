@@ -8,4 +8,10 @@
 //! `cashweb-registry` is a library for the Registry part of a CashWeb server.
 //! It allows storing and retrieving metadata by addresses (scripts).
 
+pub mod registry;
 pub mod store;
+
+pub mod proto {
+    //! Protobuf structs for SignedPayload.
+    include!(concat!(env!("OUT_DIR"), "/cashweb.registry.rs"));
+}

@@ -24,4 +24,4 @@ prost-build = "0.10"
 bitcoinsuite-ecc-secp256k1 = { path = "../../bitcoinsuite/bitcoinsuite-ecc-secp256k1" }
 
 # assert_eq! and assert_ne! with colored diffs
-pretty_assertions = "1.0"
+pretty_assertions = "1.2"

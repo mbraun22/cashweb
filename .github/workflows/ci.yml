@@ -93,6 +93,7 @@ jobs:
     - name: Build and install cargo make
       working-directory: ./cargo-make
       run: |
+        CARGO_TARGET_DIR=$(pwd)/../target cargo clean
         CARGO_TARGET_DIR=$(pwd)/../target cargo install --path . --target-dir $(pwd)/../target
       shell: bash
 
@@ -119,7 +120,9 @@ jobs:
     - name: Make cashweb libraries
       working-directory: ./cashweb
       run: |
-        CARGO_TARGET_DIR=$(pwd)/../target cargo make
+        CARGO_TARGET_DIR=$(pwd)/../target \
+          BITCOINSUITE_BIN_DIR=$(pwd)/../bitcoinsuite/downloads \
+          cargo make
 
     - name: Build cashwebd
       working-directory: ./cashweb

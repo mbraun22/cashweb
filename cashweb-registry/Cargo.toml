@@ -5,9 +5,13 @@ edition = "2021"
 
 [dependencies]
 bitcoinsuite-core = { path = "../../bitcoinsuite/bitcoinsuite-core" }
+bitcoinsuite-bitcoind = { path = "../../bitcoinsuite/bitcoinsuite-bitcoind" }
 bitcoinsuite-error = { path = "../../bitcoinsuite/bitcoinsuite-error" }
 
 cashweb-payload = { path = "../cashweb-payload" }
+
+# Build JSON objects
+json = "0.12"
 
 # Protobuf (de)serialization
 prost = "0.10"
@@ -18,12 +22,23 @@ rocksdb = "0.18"
 # Derive error enums
 thiserror = "1.0"
 
+# Async runtime
+tokio = { version = "1.17", features = ["full"] }
+
 # Hex en-/decoding
 hex = "0.4"
 
+[build-dependencies]
+# Build Protobuf structs
+prost-build = "0.10"
+
 [dev-dependencies]
+bitcoinsuite-ecc-secp256k1 = { path = "../../bitcoinsuite/bitcoinsuite-ecc-secp256k1" }
+bitcoinsuite-test-utils = { path = "../../bitcoinsuite/bitcoinsuite-test-utils" }
+bitcoinsuite-test-utils-blockchain = { path = "../../bitcoinsuite/bitcoinsuite-test-utils-blockchain" }
+
 # assert_eq! and assert_ne! with colored diffs
-pretty_assertions = "1.0"
+pretty_assertions = "1.2"
 
 # Temporary directories, automatically removed
 tempdir = "0.3"
