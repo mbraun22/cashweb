@@ -1,6 +1,7 @@
 [workspace]
 
 members = [
+    "cashweb-http-utils",
     "cashweb-payload",
     "cashweb-registry",
     "cashwebd-exe",

@@ -1,0 +1,14 @@
+syntax = "proto3";
+
+package cashweb.http;
+
+// Error report when something went wrong on the backend
+message Error {
+    // Error code in kebab case, e.g. "invalid-address"
+    string error_code = 1;
+    // Human-readable message detailling the error.
+    string msg = 2;
+    // Whether this error is likely originating from a user.
+    // In this case, apps can display `msg` to the user.
+    bool is_user_error = 3;
+}

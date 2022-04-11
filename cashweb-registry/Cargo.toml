@@ -7,8 +7,13 @@ edition = "2021"
 bitcoinsuite-core = { path = "../../bitcoinsuite/bitcoinsuite-core" }
 bitcoinsuite-bitcoind = { path = "../../bitcoinsuite/bitcoinsuite-bitcoind" }
 bitcoinsuite-error = { path = "../../bitcoinsuite/bitcoinsuite-error" }
+bitcoinsuite-ecc-secp256k1 = { path = "../../bitcoinsuite/bitcoinsuite-ecc-secp256k1" }
 
+cashweb-http-utils = { path = "../cashweb-http-utils" }
 cashweb-payload = { path = "../cashweb-payload" }
+
+# Web app framework
+axum = { version = "0.5", features = ["ws"] }
 
 # Build JSON objects
 json = "0.12"
@@ -39,6 +44,9 @@ bitcoinsuite-test-utils-blockchain = { path = "../../bitcoinsuite/bitcoinsuite-t
 
 # assert_eq! and assert_ne! with colored diffs
 pretty_assertions = "1.2"
+
+# Simple HTTP client (for testing)
+reqwest = "0.11"
 
 # Temporary directories, automatically removed
 tempdir = "0.3"

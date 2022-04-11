@@ -1,0 +1,31 @@
+[package]
+name = "cashweb-http-utils"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+bitcoinsuite-error = { path = "../../bitcoinsuite/bitcoinsuite-error" }
+
+# #[async_trait] macro
+async-trait = "0.1.50"
+
+# Web app framework
+axum = { version = "0.5", features = ["ws"] }
+
+# HTTP implementation
+hyper = "0.14"
+
+# Protobuf (de)serialization
+prost = "0.10"
+
+# Async runtime
+tokio = { version = "1.17", features = ["full"] }
+
+# Derive error enums
+thiserror = "1.0"
+
+[build-dependencies]
+# Build Protobuf structs
+prost-build = "0.10"

@@ -37,3 +37,9 @@ message Peers {
     // A list of peers.
     repeated Peer peers = 1;
 }
+
+// Response after putting address metadata to the registry.
+message PutAddressMetadataResponse {
+    // Transaction IDs of the burn txs.
+    repeated bytes txid = 1;
+}

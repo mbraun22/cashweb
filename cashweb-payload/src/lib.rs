@@ -8,6 +8,7 @@
 //! `cashweb-payload` is a library for verifying [`payload::SignedPayload`], and converting it to
 //! and from Protobuf.
 
+pub mod error;
 pub mod payload;
 pub mod verify;
 

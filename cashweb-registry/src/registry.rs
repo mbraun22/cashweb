@@ -1,7 +1,8 @@
 //! Module containing [`Registry`].
 
 use bitcoinsuite_bitcoind::rpc_client::BitcoindRpcClient;
-use bitcoinsuite_core::{ecc::Ecc, Hashed, Sha256d};
+use bitcoinsuite_core::{Hashed, Sha256d};
+use bitcoinsuite_ecc_secp256k1::EccSecp256k1;
 use bitcoinsuite_error::{ErrorMeta, Result, WrapErr};
 use cashweb_payload::payload::SignedPayload;
 use thiserror::Error;
@@ -14,13 +15,13 @@ use crate::{
 /// Cashweb [`Registry`] stores [`SignedPayload`]s containing [`proto::AddressMetadata`] for
 /// addresses.
 #[derive(Debug)]
-pub struct Registry<E> {
+pub struct Registry {
     /// Database storing the address metadata in RocksDB.
-    pub db: Db,
-    /// Signature checks are done with anything implementing [`Ecc`].
-    pub ecc: E,
+    db: Db,
+    /// Ecc for verifying secp256k1 signatures.
+    ecc: EccSecp256k1,
     /// RPC to a bitcoind instance for testing and broadcasting txs.
-    pub bitcoind: BitcoindRpcClient,
+    bitcoind: BitcoindRpcClient,
 }
 
 /// Errors indicating some registry error.
@@ -52,7 +53,16 @@ pub enum RegistryError {
 
 use self::RegistryError::*;
 
-impl<E> Registry<E> {
+impl Registry {
+    /// Construct new [`Registry`]
+    pub fn new(db: Db, bitcoind: BitcoindRpcClient) -> Self {
+        Registry {
+            db,
+            ecc: EccSecp256k1::default(),
+            bitcoind,
+        }
+    }
+
     /// Read a signed [`proto::AddressMetadata`] entry from the database.
     /// [`None`] if no such entry exists.
     pub fn get_metadata(
@@ -69,7 +79,7 @@ impl<E> Registry<E> {
     }
 }
 
-impl<E: Ecc> Registry<E> {
+impl Registry {
     /// Fully verify and write a [`cashweb_payload::proto::SignedPayload`](SignedPayload) into the
     /// database.
     pub async fn put_metadata(
