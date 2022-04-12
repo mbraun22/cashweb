@@ -104,9 +104,10 @@ async fn handle_put_registry(
 ) -> Result<Protobuf<proto::PutAddressMetadataResponse>, HttpRegistryError> {
     let address = address.parse::<LotusAddress>().map_err(InvalidAddress)?;
     let pkh = server.parse_address(&address)?;
-    let txids = server.registry.put_metadata(&pkh, signed_metadata).await?;
+    let result = server.registry.put_metadata(&pkh, signed_metadata).await?;
     Ok(Protobuf(proto::PutAddressMetadataResponse {
-        txid: txids
+        txid: result
+            .txids
             .into_iter()
             .map(|txid| txid.as_slice().to_vec())
             .collect(),

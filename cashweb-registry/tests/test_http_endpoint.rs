@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, sync::Arc, time::Duration};
+use std::{ffi::OsString, net::SocketAddr, sync::Arc, time::Duration};
 
 use bitcoinsuite_bitcoind::instance::{BitcoindChain, BitcoindConf, BitcoindInstance};
 use bitcoinsuite_core::{
@@ -23,7 +23,11 @@ async fn test_registry_http() -> Result<()> {
     let tempdir = tempdir::TempDir::new("cashweb-registry--registry")?;
     let db = Db::open(tempdir.path().join("db.rocksdb"))?;
 
-    let conf = BitcoindConf::from_chain_regtest(bin_folder(), BitcoindChain::XPI, vec![])?;
+    let conf = BitcoindConf::from_chain_regtest(
+        bin_folder(),
+        BitcoindChain::XPI,
+        vec![OsString::from("-txindex")],
+    )?;
     let mut instance = BitcoindInstance::setup(conf)?;
     instance.wait_for_ready()?;
     let bitcoind = instance.rpc_client().clone();
@@ -237,23 +241,24 @@ async fn test_registry_http() -> Result<()> {
     let signed_payload = cashweb_payload::proto::SignedPayload::decode(&mut body)?;
     signed_metadata.burn_amount = burn_amount;
     signed_metadata.payload_hash = payload_hash.as_slice().to_vec();
-    assert_eq!(signed_payload, signed_metadata,);
+    assert_eq!(signed_payload, signed_metadata);
 
-    // PUT again fails (for now)
+    // PUT again works
     let response = client
         .put(format!("{}/metadata/{}", url, address))
         .body(signed_metadata.encode_to_vec())
         .header(CONTENT_TYPE, CONTENT_TYPE_PROTOBUF)
         .send()
         .await?;
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-    check_proto_error(
-        response,
-        "bitcoind-rejected-tx",
-        "Bitcoind rejected tx: txn-already-in-mempool",
-        true,
-    )
-    .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut body = response.bytes().await?;
+    let broadcast_response = proto::PutAddressMetadataResponse::decode(&mut body)?;
+    assert_eq!(
+        broadcast_response,
+        proto::PutAddressMetadataResponse {
+            txid: vec![lotus_txid(&tx).as_slice().to_vec()],
+        },
+    );
 
     Ok(())
 }
