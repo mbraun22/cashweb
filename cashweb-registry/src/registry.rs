@@ -1,7 +1,7 @@
 //! Module containing [`Registry`].
 
 use bitcoinsuite_bitcoind::{rpc_client::BitcoindRpcClient, BitcoindError};
-use bitcoinsuite_core::{lotus_txid, Hashed, Sha256d};
+use bitcoinsuite_core::{lotus_txid, Hashed, LotusAddress, Net, Sha256d};
 use bitcoinsuite_ecc_secp256k1::EccSecp256k1;
 use bitcoinsuite_error::{ErrorMeta, Result, WrapErr};
 use cashweb_payload::payload::{BurnTx, SignedPayload};
@@ -22,6 +22,8 @@ pub struct Registry {
     ecc: EccSecp256k1,
     /// RPC to a bitcoind instance for testing and broadcasting txs.
     bitcoind: BitcoindRpcClient,
+    /// Whether server is running on a mainnet or regtest network.
+    net: Net,
 }
 
 /// Result of putting metadata into the registry.
@@ -107,17 +109,26 @@ use self::RegistryError::*;
 
 impl Registry {
     /// Construct new [`Registry`]
-    pub fn new(db: Db, bitcoind: BitcoindRpcClient) -> Self {
+    pub fn new(db: Db, bitcoind: BitcoindRpcClient, net: Net) -> Self {
         Registry {
             db,
             ecc: EccSecp256k1::default(),
             bitcoind,
+            net,
         }
     }
 
     /// Read a signed [`proto::AddressMetadata`] entry from the database.
     /// [`None`] if no such entry exists.
     pub fn get_metadata(
+        &self,
+        address: &LotusAddress,
+    ) -> Result<Option<SignedPayload<proto::AddressMetadata>>> {
+        let pkh = PubKeyHash::from_address(address, self.net)?;
+        self.get_metadata_pkh(&pkh)
+    }
+
+    fn get_metadata_pkh(
         &self,
         pkh: &PubKeyHash,
     ) -> Result<Option<SignedPayload<proto::AddressMetadata>>> {
@@ -134,15 +145,17 @@ impl Registry {
     /// database.
     pub async fn put_metadata(
         &self,
-        pkh: &PubKeyHash,
+        address: &LotusAddress,
         signed_metadata: cashweb_payload::proto::SignedPayload,
     ) -> Result<PutMetadataResult> {
+        let pkh = PubKeyHash::from_address(address, self.net)?;
+
         // Decode SignedPayload
         let signed_metadata = SignedPayload::<proto::AddressMetadata>::from_proto(signed_metadata)?;
 
         // Check pubkey hash
         let actual_pkh = pkh.algorithm().hash_pubkey(*signed_metadata.pubkey());
-        if *pkh != actual_pkh {
+        if pkh != actual_pkh {
             return Err(PubKeyHashMismatch {
                 expected: pkh.clone(),
                 actual: actual_pkh,
@@ -153,7 +166,7 @@ impl Registry {
         // Verify burn amount and signatures check out
         signed_metadata.verify(&self.ecc)?;
 
-        if let Some(existing_metadata) = self.get_metadata(pkh)? {
+        if let Some(existing_metadata) = self.get_metadata_pkh(&pkh)? {
             // If existing payload hash is the same as the new payload hash,
             // we don't need to verify anything.
             if signed_metadata.payload_hash() == existing_metadata.payload_hash() {
@@ -217,7 +230,7 @@ impl Registry {
         }
 
         // Write new metadata into the database
-        self.db.metadata().put(pkh, &signed_metadata.to_proto())?;
+        self.db.metadata().put(&pkh, &signed_metadata.to_proto())?;
         Ok(PutMetadataResult {
             txids,
             blockchain_action,
@@ -274,9 +287,9 @@ mod tests {
     use bitcoinsuite_bitcoind::instance::{BitcoindChain, BitcoindConf, BitcoindInstance};
     use bitcoinsuite_core::{
         ecc::{Ecc, VerifySignatureError},
-        lotus_txid, AddressType, BitcoinCode, CashAddress, Hashed, Network, P2PKHSignatory, Script,
+        lotus_txid, BitcoinCode, Hashed, LotusAddress, Net, Network, P2PKHSignatory, Script,
         SequenceNo, Sha256, ShaRmd160, SigHashType, SignData, SignField, TxBuilder, TxBuilderInput,
-        TxBuilderOutput, TxInput, TxOutput, UnhashedTx, BCHREG,
+        TxBuilderOutput, TxInput, TxOutput, UnhashedTx,
     };
     use bitcoinsuite_ecc_secp256k1::EccSecp256k1;
     use bitcoinsuite_error::Result;
@@ -317,27 +330,28 @@ mod tests {
             db,
             ecc: EccSecp256k1::default(),
             bitcoind: bitcoind.clone(),
+            net: Net::Regtest,
         };
 
         let seckey = registry.ecc.seckey_from_array([4; 32])?;
         let pubkey = registry.ecc.derive_pubkey(&seckey);
+        let address = LotusAddress::new(
+            "lotus",
+            Net::Regtest,
+            Script::p2pkh(&ShaRmd160::digest(pubkey.array().into())),
+        );
         let pkh = PkhAlgorithm::Sha256Ripemd160.hash_pubkey(pubkey.array());
 
-        let address = CashAddress::from_hash(
-            BCHREG,
-            AddressType::P2PKH,
-            ShaRmd160::digest(pubkey.array().into()),
-        );
         let mut utxos = setup_bitcoind_coins(
             instance.cli(),
             Network::XPI,
             100,
             address.as_str(),
-            &address.to_script().hex(),
+            &address.script().hex(),
         )?;
 
         // DB empty; querying for a PKH returns None
-        assert_eq!(registry.get_metadata(&pkh)?, None);
+        assert_eq!(registry.get_metadata(&address)?, None);
 
         // Tx parses, but the output burn_index points to doesn't exist
         let address_metadata = proto::AddressMetadata {
@@ -370,7 +384,7 @@ mod tests {
 
         // Invalid protobuf (checked in SignedPayload::from_proto)
         let err = registry
-            .put_metadata(&pkh, signed_metadata.clone())
+            .put_metadata(&address, signed_metadata.clone())
             .await
             .unwrap_err()
             .downcast::<ParseSignedPayloadError>()?;
@@ -383,23 +397,27 @@ mod tests {
 
         // Wrong pubkeyhash
         signed_metadata.payload = address_metadata.encode_to_vec();
-        let wrong_pkh = PubKeyHash::new(PkhAlgorithm::Sha256Ripemd160, [4; 20].into())?;
+        let wrong_address = LotusAddress::new(
+            "lotus",
+            Net::Regtest,
+            Script::p2pkh(&ShaRmd160::new([4; 20])),
+        );
         let err = registry
-            .put_metadata(&wrong_pkh, signed_metadata.clone())
+            .put_metadata(&wrong_address, signed_metadata.clone())
             .await
             .unwrap_err()
             .downcast::<RegistryError>()?;
         assert_eq!(
             err,
             RegistryError::PubKeyHashMismatch {
-                expected: wrong_pkh,
+                expected: PubKeyHash::from_address(&wrong_address, Net::Regtest)?,
                 actual: pkh.clone(),
             },
         );
 
         // Invalid signature (checked in SignedPayload::verify)
         let err = registry
-            .put_metadata(&pkh, signed_metadata.clone())
+            .put_metadata(&address, signed_metadata.clone())
             .await
             .unwrap_err()
             .downcast::<ValidateSignedPayloadError>()?;
@@ -414,7 +432,7 @@ mod tests {
             .sign(&seckey, payload_hash.byte_array().clone())
             .to_vec();
         let err = registry
-            .put_metadata(&pkh, signed_metadata.clone())
+            .put_metadata(&address, signed_metadata.clone())
             .await
             .unwrap_err()
             .downcast::<RegistryError>()?;
@@ -434,7 +452,7 @@ mod tests {
                 script: Script::default(),
                 sequence: SequenceNo::finalized(),
                 sign_data: Some(SignData::new(vec![
-                    SignField::OutputScript(address.to_script()),
+                    SignField::OutputScript(address.script().clone()),
                     SignField::Value(value),
                 ])),
             },
@@ -449,7 +467,9 @@ mod tests {
         signed_metadata.burn_amount = burn_amount;
 
         // Now, putting the metadata succeeds
-        let result = registry.put_metadata(&pkh, signed_metadata.clone()).await?;
+        let result = registry
+            .put_metadata(&address, signed_metadata.clone())
+            .await?;
         assert_eq!(
             result,
             PutMetadataResult {
@@ -458,14 +478,16 @@ mod tests {
             }
         );
 
-        let signed_payload = registry.get_metadata(&pkh)?;
+        let signed_payload = registry.get_metadata(&address)?;
         assert_eq!(
             signed_payload,
             Some(SignedPayload::from_proto(signed_metadata.clone())?),
         );
 
         // Putting the exact same metadata again works, the node already knows the payload hash.
-        let result = registry.put_metadata(&pkh, signed_metadata.clone()).await?;
+        let result = registry
+            .put_metadata(&address, signed_metadata.clone())
+            .await?;
         assert_eq!(
             result,
             PutMetadataResult {
@@ -496,7 +518,7 @@ mod tests {
                         script: Script::default(),
                         sequence: SequenceNo::finalized(),
                         sign_data: Some(SignData::new(vec![
-                            SignField::OutputScript(address.to_script()),
+                            SignField::OutputScript(address.script().clone()),
                             SignField::Value(value),
                         ])),
                     },
@@ -507,7 +529,7 @@ mod tests {
                     }),
                 )],
                 outputs: vec![
-                    TxBuilderOutput::Leftover(address.to_script()),
+                    TxBuilderOutput::Leftover(address.script().clone()),
                     TxBuilderOutput::Fixed(TxOutput {
                         value: burn_amount,
                         script: build_commitment_script(pubkey.array(), &payload_hash),
@@ -532,7 +554,7 @@ mod tests {
             }],
         })?;
         let err = registry
-            .put_metadata(&pkh, signed_metadata)
+            .put_metadata(&address, signed_metadata)
             .await
             .unwrap_err()
             .downcast::<RegistryError>()?;
@@ -550,7 +572,9 @@ mod tests {
             ttl: 10,
             entries: vec![],
         })?;
-        let result = registry.put_metadata(&pkh, signed_metadata.clone()).await?;
+        let result = registry
+            .put_metadata(&address, signed_metadata.clone())
+            .await?;
         assert_eq!(
             result,
             PutMetadataResult {
@@ -560,7 +584,7 @@ mod tests {
         );
 
         assert_eq!(
-            registry.get_metadata(&pkh)?,
+            registry.get_metadata(&address)?,
             Some(SignedPayload::from_proto(signed_metadata)?)
         );
 
@@ -577,7 +601,9 @@ mod tests {
         bitcoind
             .cmd_text("generatetoaddress", &[1i32.into(), address.as_str().into()])
             .await?;
-        let result = registry.put_metadata(&pkh, signed_metadata.clone()).await?;
+        let result = registry
+            .put_metadata(&address, signed_metadata.clone())
+            .await?;
         assert_eq!(
             result,
             PutMetadataResult {
@@ -587,7 +613,7 @@ mod tests {
         );
 
         assert_eq!(
-            registry.get_metadata(&pkh)?,
+            registry.get_metadata(&address)?,
             Some(SignedPayload::from_proto(signed_metadata.clone())?),
         );
 
@@ -611,7 +637,7 @@ mod tests {
         assert_ne!(old_tx, tx);
         signed_metadata.burn_txs[0].tx = tx.ser().to_vec();
         let err = registry
-            .put_metadata(&pkh, signed_metadata)
+            .put_metadata(&address, signed_metadata)
             .await
             .unwrap_err()
             .downcast::<RegistryError>()?;
@@ -653,7 +679,9 @@ mod tests {
                             .unwrap();
                     }
                 });
-                let result = registry.put_metadata(&pkh, signed_metadata.clone()).await;
+                let result = registry
+                    .put_metadata(&address, signed_metadata.clone())
+                    .await;
                 if let Ok(result) = result {
                     if result.blockchain_action
                         == PutMetadataBlockchainAction::BroadcastRaceCondition

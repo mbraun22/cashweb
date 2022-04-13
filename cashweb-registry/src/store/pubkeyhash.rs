@@ -2,7 +2,7 @@
 
 use std::fmt::Display;
 
-use bitcoinsuite_core::{Bytes, Hashed, ShaRmd160};
+use bitcoinsuite_core::{Bytes, Hashed, LotusAddress, Net, ScriptVariant, ShaRmd160, LOTUS_PREFIX};
 use bitcoinsuite_error::{ErrorMeta, Result};
 use thiserror::Error;
 
@@ -22,7 +22,7 @@ pub struct PubKeyHash {
 }
 
 /// Errors relating to `PubKeyHash`.
-#[derive(Debug, Error, ErrorMeta, Clone, PartialEq, Eq)]
+#[derive(Debug, Error, ErrorMeta, Clone, PartialEq)]
 pub enum PkhError {
     /// Invalid hash length given the algorithm.
     #[invalid_client_input()]
@@ -35,6 +35,36 @@ pub enum PkhError {
         /// Actual length of the given hash.
         actual: usize,
     },
+
+    /// Provided string doesn't name a known [`PkhAlgorithm`].
+    #[invalid_client_input()]
+    #[error("Invalid public key hash algorithm {0:?}, expected \"p2pkh\"")]
+    InvalidPkhAlgorithm(String),
+
+    /// Invalid lotus address in request.
+    #[invalid_user_input()]
+    #[error("Invalid address prefix, expected {expected:?} but got {actual:?}")]
+    InvalidAddressPrefix {
+        /// Prefix expected by the server.
+        expected: String,
+        /// Prefix encoded in the address.
+        actual: String,
+    },
+
+    /// Invalid lotus address in request.
+    #[invalid_user_input()]
+    #[error("Invalid address net, expected {expected:?} but got {actual:?}")]
+    InvalidAddressNet {
+        /// Net expected by the server.
+        expected: Net,
+        /// Net encoded in the address.
+        actual: Net,
+    },
+
+    /// Invalid lotus address in request.
+    #[invalid_client_input()]
+    #[error("Unsupported address script variant: {0:?}")]
+    UnsupportedScriptVariant(ScriptVariant),
 }
 
 use self::PkhError::*;
@@ -80,6 +110,30 @@ impl PubKeyHash {
             .into());
         }
         Ok(PubKeyHash { algorithm, hash })
+    }
+
+    /// Validate and extract a [`PubKeyHash`] from a [`LotusAddress`].
+    pub fn from_address(address: &LotusAddress, expected_net: Net) -> Result<Self> {
+        if address.prefix() != LOTUS_PREFIX {
+            return Err(InvalidAddressPrefix {
+                expected: LOTUS_PREFIX.to_string(),
+                actual: address.prefix().to_string(),
+            }
+            .into());
+        }
+        if address.net() != expected_net {
+            return Err(InvalidAddressNet {
+                expected: expected_net,
+                actual: address.net(),
+            }
+            .into());
+        }
+        match address.script().parse_variant() {
+            ScriptVariant::P2PKH(hash) => {
+                PubKeyHash::new(PkhAlgorithm::Sha256Ripemd160, hash.as_slice().into())
+            }
+            variant => Err(UnsupportedScriptVariant(variant).into()),
+        }
     }
 
     /// Hashing algorithm used by this [`PubKeyHash`].

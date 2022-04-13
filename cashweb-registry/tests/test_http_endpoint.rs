@@ -34,8 +34,7 @@ async fn test_registry_http() -> Result<()> {
 
     let ecc = EccSecp256k1::default();
     let server = RegistryServer {
-        registry: Arc::new(Registry::new(db, bitcoind)),
-        net: Net::Regtest,
+        registry: Arc::new(Registry::new(db, bitcoind, Net::Regtest)),
     };
 
     let router = server.into_router();
@@ -77,6 +76,23 @@ async fn test_registry_http() -> Result<()> {
         response,
         "invalid-address",
         "Invalid lotus address: Missing prefix",
+        true,
+    )
+    .await?;
+
+    // Expected "lotus" address prefix
+    let response = client
+        .get(format!(
+            "{}/metadata/fooR16PSJNf1EDEfGvaYzaXJCJZrXH4pgiTo7kyVbTkkA",
+            url
+        ))
+        .send()
+        .await?;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    check_proto_error(
+        response,
+        "invalid-address-prefix",
+        "Invalid address prefix, expected \"lotus\" but got \"foo\"",
         true,
     )
     .await?;
