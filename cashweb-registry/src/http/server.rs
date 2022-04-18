@@ -2,19 +2,39 @@
 
 use std::sync::Arc;
 
-use axum::{body::Body, extract::Path, http::Response, routing, Extension, Router};
+use axum::{
+    body::Body,
+    extract::Path,
+    http::{HeaderMap, Response},
+    routing, Extension, Router,
+};
 use bitcoinsuite_core::{Hashed, LotusAddress, LotusAddressError};
 use bitcoinsuite_error::{ErrorMeta, Result};
 use cashweb_http_utils::protobuf::Protobuf;
 use thiserror::Error;
 
-use crate::{http::error::HttpRegistryError, proto, registry::Registry};
+use crate::{
+    http::error::HttpRegistryError,
+    proto,
+    registry::{PutMetadataResult, Registry},
+};
 
 /// Provides endpoints to read and write from the Cashweb Registry.
 #[derive(Debug, Clone)]
 pub struct RegistryServer {
     /// [`Registry`] this server accesses.
     pub registry: Arc<Registry>,
+}
+
+/// Relevant parts of an HTTP request to put new address metadata.
+#[derive(Debug, Clone)]
+pub struct PutMetadataRequest {
+    /// Address the metadata should be updated for.
+    pub address: LotusAddress,
+    /// HTTP headers of the PUT request.
+    pub header_map: HeaderMap,
+    /// Signed serialized [`proto::AddressMetadata`] payload.
+    pub signed_metadata: cashweb_payload::proto::SignedPayload,
 }
 
 /// Errors indicating invalid requests being sent to the Registry endpoint.
@@ -45,6 +65,14 @@ impl RegistryServer {
             )
             .layer(Extension(self))
     }
+
+    async fn put_metadata(&self, request: PutMetadataRequest) -> Result<PutMetadataResult> {
+        let result = self
+            .registry
+            .put_metadata(&request.address, &request.signed_metadata)
+            .await?;
+        Ok(result)
+    }
 }
 
 async fn handle_post_options() -> Result<Response<Body>, HttpRegistryError> {
@@ -58,12 +86,15 @@ async fn handle_put_registry(
     Path(address): Path<String>,
     Protobuf(signed_metadata): Protobuf<cashweb_payload::proto::SignedPayload>,
     Extension(server): Extension<RegistryServer>,
+    header_map: HeaderMap,
 ) -> Result<Protobuf<proto::PutAddressMetadataResponse>, HttpRegistryError> {
     let address = address.parse::<LotusAddress>().map_err(InvalidAddress)?;
-    let result = server
-        .registry
-        .put_metadata(&address, &signed_metadata)
-        .await?;
+    let request = PutMetadataRequest {
+        address,
+        header_map,
+        signed_metadata,
+    };
+    let result = server.put_metadata(request).await?;
     Ok(Protobuf(proto::PutAddressMetadataResponse {
         txid: result
             .txids

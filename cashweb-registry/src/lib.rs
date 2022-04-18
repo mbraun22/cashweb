@@ -9,6 +9,7 @@
 //! It allows storing and retrieving metadata by addresses (scripts).
 
 pub mod http;
+pub mod p2p;
 pub mod registry;
 pub mod store;
 

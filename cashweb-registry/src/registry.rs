@@ -27,12 +27,14 @@ pub struct Registry {
 }
 
 /// Result of putting metadata into the registry.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PutMetadataResult {
     /// Transaction IDs of the burn txs for this payload.
     pub txids: Vec<Sha256d>,
     /// Which action happened with the blockchain.
     pub blockchain_action: PutMetadataBlockchainAction,
+    /// Parsed signed payload.
+    pub signed_metadata: SignedPayload<proto::AddressMetadata>,
 }
 
 /// Which action happened with the blockchain when putting address metadata.
@@ -178,6 +180,7 @@ impl Registry {
                         .map(|tx| lotus_txid(tx.tx().unhashed_tx()))
                         .collect(),
                     blockchain_action: PutMetadataBlockchainAction::AlreadyKnowPayloadHash,
+                    signed_metadata,
                 });
             }
             // Timestamp needs to be ascending.
@@ -235,6 +238,7 @@ impl Registry {
         Ok(PutMetadataResult {
             txids,
             blockchain_action,
+            signed_metadata,
         })
     }
 
@@ -474,6 +478,7 @@ mod tests {
             PutMetadataResult {
                 txids: vec![lotus_txid(&tx)],
                 blockchain_action: PutMetadataBlockchainAction::Broadcast,
+                signed_metadata: SignedPayload::parse_proto(&signed_metadata)?,
             }
         );
 
@@ -490,6 +495,7 @@ mod tests {
             PutMetadataResult {
                 txids: vec![lotus_txid(&tx)],
                 blockchain_action: PutMetadataBlockchainAction::AlreadyKnowPayloadHash,
+                signed_metadata: SignedPayload::parse_proto(&signed_metadata)?,
             }
         );
 
@@ -575,6 +581,7 @@ mod tests {
             PutMetadataResult {
                 txids: vec![lotus_txid(&tx)],
                 blockchain_action: PutMetadataBlockchainAction::Broadcast,
+                signed_metadata: SignedPayload::parse_proto(&signed_metadata)?,
             }
         );
 
@@ -602,6 +609,7 @@ mod tests {
             PutMetadataResult {
                 txids: vec![lotus_txid(&tx)],
                 blockchain_action: PutMetadataBlockchainAction::AlreadyKnowTx,
+                signed_metadata: SignedPayload::parse_proto(&signed_metadata)?,
             }
         );
 
