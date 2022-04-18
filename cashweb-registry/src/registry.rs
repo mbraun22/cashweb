@@ -137,7 +137,7 @@ impl Registry {
             None => return Ok(None),
         };
         let signed_payload =
-            SignedPayload::from_proto(signed_payload).wrap_err(InvalidSignedPayloadInDb)?;
+            SignedPayload::parse_proto(&signed_payload).wrap_err(InvalidSignedPayloadInDb)?;
         Ok(Some(signed_payload))
     }
 
@@ -146,12 +146,13 @@ impl Registry {
     pub async fn put_metadata(
         &self,
         address: &LotusAddress,
-        signed_metadata: cashweb_payload::proto::SignedPayload,
+        signed_metadata: &cashweb_payload::proto::SignedPayload,
     ) -> Result<PutMetadataResult> {
         let pkh = PubKeyHash::from_address(address, self.net)?;
 
         // Decode SignedPayload
-        let signed_metadata = SignedPayload::<proto::AddressMetadata>::from_proto(signed_metadata)?;
+        let signed_metadata =
+            SignedPayload::<proto::AddressMetadata>::parse_proto(signed_metadata)?;
 
         // Check pubkey hash
         let actual_pkh = pkh.algorithm().hash_pubkey(*signed_metadata.pubkey());
@@ -384,7 +385,7 @@ mod tests {
 
         // Invalid protobuf (checked in SignedPayload::from_proto)
         let err = registry
-            .put_metadata(&address, signed_metadata.clone())
+            .put_metadata(&address, &signed_metadata)
             .await
             .unwrap_err()
             .downcast::<ParseSignedPayloadError>()?;
@@ -403,7 +404,7 @@ mod tests {
             Script::p2pkh(&ShaRmd160::new([4; 20])),
         );
         let err = registry
-            .put_metadata(&wrong_address, signed_metadata.clone())
+            .put_metadata(&wrong_address, &signed_metadata)
             .await
             .unwrap_err()
             .downcast::<RegistryError>()?;
@@ -417,7 +418,7 @@ mod tests {
 
         // Invalid signature (checked in SignedPayload::verify)
         let err = registry
-            .put_metadata(&address, signed_metadata.clone())
+            .put_metadata(&address, &signed_metadata)
             .await
             .unwrap_err()
             .downcast::<ValidateSignedPayloadError>()?;
@@ -432,7 +433,7 @@ mod tests {
             .sign(&seckey, payload_hash.byte_array().clone())
             .to_vec();
         let err = registry
-            .put_metadata(&address, signed_metadata.clone())
+            .put_metadata(&address, &signed_metadata)
             .await
             .unwrap_err()
             .downcast::<RegistryError>()?;
@@ -467,9 +468,7 @@ mod tests {
         signed_metadata.burn_amount = burn_amount;
 
         // Now, putting the metadata succeeds
-        let result = registry
-            .put_metadata(&address, signed_metadata.clone())
-            .await?;
+        let result = registry.put_metadata(&address, &signed_metadata).await?;
         assert_eq!(
             result,
             PutMetadataResult {
@@ -481,13 +480,11 @@ mod tests {
         let signed_payload = registry.get_metadata(&address)?;
         assert_eq!(
             signed_payload,
-            Some(SignedPayload::from_proto(signed_metadata.clone())?),
+            Some(SignedPayload::parse_proto(&signed_metadata)?),
         );
 
         // Putting the exact same metadata again works, the node already knows the payload hash.
-        let result = registry
-            .put_metadata(&address, signed_metadata.clone())
-            .await?;
+        let result = registry.put_metadata(&address, &signed_metadata).await?;
         assert_eq!(
             result,
             PutMetadataResult {
@@ -554,7 +551,7 @@ mod tests {
             }],
         })?;
         let err = registry
-            .put_metadata(&address, signed_metadata)
+            .put_metadata(&address, &signed_metadata)
             .await
             .unwrap_err()
             .downcast::<RegistryError>()?;
@@ -572,9 +569,7 @@ mod tests {
             ttl: 10,
             entries: vec![],
         })?;
-        let result = registry
-            .put_metadata(&address, signed_metadata.clone())
-            .await?;
+        let result = registry.put_metadata(&address, &signed_metadata).await?;
         assert_eq!(
             result,
             PutMetadataResult {
@@ -585,7 +580,7 @@ mod tests {
 
         assert_eq!(
             registry.get_metadata(&address)?,
-            Some(SignedPayload::from_proto(signed_metadata)?)
+            Some(SignedPayload::parse_proto(&signed_metadata)?)
         );
 
         let (signed_metadata, tx) = build_signed_metadata(proto::AddressMetadata {
@@ -601,9 +596,7 @@ mod tests {
         bitcoind
             .cmd_text("generatetoaddress", &[1i32.into(), address.as_str().into()])
             .await?;
-        let result = registry
-            .put_metadata(&address, signed_metadata.clone())
-            .await?;
+        let result = registry.put_metadata(&address, &signed_metadata).await?;
         assert_eq!(
             result,
             PutMetadataResult {
@@ -614,7 +607,7 @@ mod tests {
 
         assert_eq!(
             registry.get_metadata(&address)?,
-            Some(SignedPayload::from_proto(signed_metadata.clone())?),
+            Some(SignedPayload::parse_proto(&signed_metadata)?),
         );
 
         // Malleate tx, will result in a different txid, but same raw tx hex
@@ -637,7 +630,7 @@ mod tests {
         assert_ne!(old_tx, tx);
         signed_metadata.burn_txs[0].tx = tx.ser().to_vec();
         let err = registry
-            .put_metadata(&address, signed_metadata)
+            .put_metadata(&address, &signed_metadata)
             .await
             .unwrap_err()
             .downcast::<RegistryError>()?;
@@ -679,9 +672,7 @@ mod tests {
                             .unwrap();
                     }
                 });
-                let result = registry
-                    .put_metadata(&address, signed_metadata.clone())
-                    .await;
+                let result = registry.put_metadata(&address, &signed_metadata).await;
                 if let Ok(result) = result {
                     if result.blockchain_action
                         == PutMetadataBlockchainAction::BroadcastRaceCondition

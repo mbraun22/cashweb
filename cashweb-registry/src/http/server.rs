@@ -62,7 +62,7 @@ async fn handle_put_registry(
     let address = address.parse::<LotusAddress>().map_err(InvalidAddress)?;
     let result = server
         .registry
-        .put_metadata(&address, signed_metadata)
+        .put_metadata(&address, &signed_metadata)
         .await?;
     Ok(Protobuf(proto::PutAddressMetadataResponse {
         txid: result

@@ -101,13 +101,13 @@ impl<T: prost::Message + Default> SignedPayload<T> {
     /// * `burn_txs` has to contain parsable txs.
     /// * `burn_idx` has to point to an actually existing output in the tx.
     /// * `burn_amount` has to be 0 or set to the sum of burned coins.
-    pub fn from_proto(signed_payload: proto::SignedPayload) -> Result<Self> {
+    pub fn parse_proto(signed_payload: &proto::SignedPayload) -> Result<Self> {
         let pubkey: [u8; PUBKEY_LENGTH] = signed_payload
             .pubkey
             .as_slice()
             .try_into()
             .map_err(|_| InvalidPubKeyLen(signed_payload.pubkey.len()))?;
-        let payload_raw = Bytes::from(signed_payload.payload);
+        let payload_raw = Bytes::from(signed_payload.payload.as_slice());
         let expected_payload_hash = Sha256::digest(payload_raw.clone());
 
         // Assign or check the payload_hash
@@ -139,7 +139,7 @@ impl<T: prost::Message + Default> SignedPayload<T> {
         // Parse `BurnTx`s
         let burn_txs = signed_payload
             .burn_txs
-            .into_iter()
+            .iter()
             .map(|burn_tx| {
                 let tx = UnhashedTx::deser(&mut burn_tx.tx.clone().into())
                     .wrap_err_with(|| ParsingBurnTxFailed(hex::encode(&burn_tx.tx)))?
@@ -174,7 +174,7 @@ impl<T: prost::Message + Default> SignedPayload<T> {
         Ok(SignedPayload {
             payload,
             pubkey,
-            sig: signed_payload.sig.into(),
+            sig: signed_payload.sig.as_slice().into(),
             sig_scheme: SignatureScheme::from_i32(signed_payload.sig_scheme)
                 .ok_or(UnknownSignatureScheme(signed_payload.sig_scheme))?,
             payload_raw,
@@ -285,11 +285,12 @@ mod tests {
 
     #[test]
     fn test_parse_signed_payload() -> Result<()> {
-        let payload_err = |payload_proto: proto::SignedPayload| -> Result<ParseSignedPayloadError> {
-            SignedPayload::<MockProto>::from_proto(payload_proto)
-                .unwrap_err()
-                .downcast()
-        };
+        let payload_err =
+            |payload_proto: &proto::SignedPayload| -> Result<ParseSignedPayloadError> {
+                SignedPayload::<MockProto>::parse_proto(payload_proto)
+                    .unwrap_err()
+                    .downcast()
+            };
         let pubkey = [2; 33];
         let payload = MockProto {
             a: b"hello world!".to_vec(),
@@ -300,21 +301,21 @@ mod tests {
 
         let mut signed_payload = proto::SignedPayload::default();
         assert_eq!(
-            payload_err(signed_payload.clone())?,
+            payload_err(&signed_payload)?,
             ParseSignedPayloadError::InvalidPubKeyLen(0),
         );
 
         // Set to valid pubkey, but payload and payload hash empty
         signed_payload.pubkey = pubkey.to_vec();
         assert_eq!(
-            payload_err(signed_payload.clone())?,
+            payload_err(&signed_payload)?,
             ParseSignedPayloadError::PayloadHashAndPayloadEmpty,
         );
 
         // A payload that's not a protobuf of MockProto will fail
         signed_payload.payload = vec![77, 88, 99];
         assert_eq!(
-            payload_err(signed_payload.clone())?,
+            payload_err(&signed_payload)?,
             ParseSignedPayloadError::ParsingPayloadFailed(prost::DecodeError::new(
                 "buffer underflow"
             )),
@@ -323,7 +324,7 @@ mod tests {
         // With non-empty payload but empty payload_hash, we get the payload_hash prepared for us
         signed_payload.payload = payload_raw.to_vec();
         assert_eq!(
-            SignedPayload::from_proto(signed_payload.clone())?,
+            SignedPayload::parse_proto(&signed_payload)?,
             SignedPayload {
                 payload: payload.clone(),
                 pubkey,
@@ -339,14 +340,14 @@ mod tests {
         // Payload hash not 32 bytes (or empty)
         signed_payload.payload_hash = vec![1, 2, 3];
         assert_eq!(
-            payload_err(signed_payload.clone())?,
+            payload_err(&signed_payload)?,
             ParseSignedPayloadError::InvalidPayloadHashLen(3),
         );
 
         // Payload hash incorrect
         signed_payload.payload_hash = vec![7; 32];
         assert_eq!(
-            payload_err(signed_payload.clone())?,
+            payload_err(&signed_payload)?,
             ParseSignedPayloadError::IncorrectPayloadHash {
                 expected: payload_hash.clone(),
                 actual: Sha256::new([7; 32]),
@@ -356,7 +357,7 @@ mod tests {
         {
             // With correct payload_hash, we get the a valid SignedPayload
             signed_payload.payload_hash = payload_hash.as_slice().to_vec();
-            let result = SignedPayload::from_proto(signed_payload.clone())?;
+            let result = SignedPayload::parse_proto(&signed_payload)?;
             assert_eq!(
                 result,
                 SignedPayload {
@@ -380,7 +381,7 @@ mod tests {
             burn_idx: 0,
         }];
         assert_eq!(
-            payload_err(signed_payload.clone())?,
+            payload_err(&signed_payload)?,
             ParseSignedPayloadError::ParsingBurnTxFailed("696e76616c6964207478".to_string()),
         );
 
@@ -399,14 +400,14 @@ mod tests {
             burn_idx: 10,
         }];
         assert_eq!(
-            payload_err(signed_payload.clone())?,
+            payload_err(&signed_payload)?,
             ParseSignedPayloadError::NoSuchOutput(10),
         );
 
         // If burn_amount is 0, it computes the burn_amount for us
         signed_payload.burn_txs[0].burn_idx = 0;
         assert_eq!(
-            SignedPayload::from_proto(signed_payload.clone())?,
+            SignedPayload::parse_proto(&signed_payload)?,
             SignedPayload {
                 payload: payload.clone(),
                 pubkey,
@@ -426,7 +427,7 @@ mod tests {
         // Otherwise, if burn_amount doesn't match exactly, it fails
         signed_payload.burn_amount = 1234;
         assert_eq!(
-            payload_err(signed_payload.clone())?,
+            payload_err(&signed_payload)?,
             ParseSignedPayloadError::TotalBurnAmountMismatch {
                 expected: 1234,
                 actual: 1_000_000,
@@ -436,7 +437,7 @@ mod tests {
         // If set to the correct value, it works
         signed_payload.burn_amount = 1_000_000;
         assert_eq!(
-            SignedPayload::from_proto(signed_payload.clone())?,
+            SignedPayload::parse_proto(&signed_payload)?,
             SignedPayload {
                 payload: payload.clone(),
                 pubkey,
@@ -473,7 +474,7 @@ mod tests {
             burn_idx: 2,
         });
         assert_eq!(
-            payload_err(signed_payload.clone())?,
+            payload_err(&signed_payload)?,
             ParseSignedPayloadError::TotalBurnAmountMismatch {
                 expected: 1_000_000,
                 actual: 1_234_567,
@@ -483,7 +484,7 @@ mod tests {
         {
             // If we set the correct value, it works again
             signed_payload.burn_amount = 1_234_567;
-            let result = SignedPayload::from_proto(signed_payload.clone())?;
+            let result = SignedPayload::parse_proto(&signed_payload)?;
             assert_eq!(
                 result,
                 SignedPayload {
