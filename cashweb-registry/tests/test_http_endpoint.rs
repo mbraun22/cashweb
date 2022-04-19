@@ -1,6 +1,6 @@
-use std::{ffi::OsString, net::SocketAddr, sync::Arc, time::Duration};
+use std::ffi::OsString;
 
-use bitcoinsuite_bitcoind::instance::{BitcoindChain, BitcoindConf, BitcoindInstance};
+use bitcoinsuite_bitcoind::instance::{BitcoindChain, BitcoindConf};
 use bitcoinsuite_core::{
     ecc::Ecc, lotus_txid, BitcoinCode, Hashed, LotusAddress, Net, Network, P2PKHSignatory, Script,
     SequenceNo, Sha256, ShaRmd160, SigHashType, SignData, SignField, TxBuilder, TxBuilderInput,
@@ -8,61 +8,43 @@ use bitcoinsuite_core::{
 };
 use bitcoinsuite_ecc_secp256k1::EccSecp256k1;
 use bitcoinsuite_error::Result;
-use bitcoinsuite_test_utils::{bin_folder, is_free_tcp, pick_ports};
+use bitcoinsuite_test_utils::bin_folder;
 use bitcoinsuite_test_utils_blockchain::setup_bitcoind_coins;
 use cashweb_http_utils::protobuf::CONTENT_TYPE_PROTOBUF;
 use cashweb_payload::{payload::SignatureScheme, verify::build_commitment_script};
-use cashweb_registry::{http::server::RegistryServer, proto, registry::Registry, store::db::Db};
+use cashweb_registry::{proto, test_instance::RegistryTestInstance};
 use pretty_assertions::assert_eq;
 use prost::Message;
-use reqwest::{header::CONTENT_TYPE, StatusCode};
+use reqwest::{
+    header::{CONTENT_TYPE, ORIGIN},
+    StatusCode,
+};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_registry_http() -> Result<()> {
     let _ = bitcoinsuite_error::install();
     let tempdir = tempdir::TempDir::new("cashweb-registry--registry")?;
-    let db = Db::open(tempdir.path().join("db.rocksdb"))?;
 
     let conf = BitcoindConf::from_chain_regtest(
         bin_folder(),
         BitcoindChain::XPI,
         vec![OsString::from("-txindex")],
     )?;
-    let mut instance = BitcoindInstance::setup(conf)?;
-    instance.wait_for_ready()?;
-    let bitcoind = instance.rpc_client().clone();
 
-    let ecc = EccSecp256k1::default();
-    let server = RegistryServer {
-        registry: Arc::new(Registry::new(db, bitcoind, Net::Regtest)),
-    };
-
-    let router = server.into_router();
-
-    let port = pick_ports(1)?[0];
-    let socket_addr = format!("127.0.0.1:{}", port).parse::<SocketAddr>()?;
-    let url = format!("http://{}", socket_addr);
-
-    tokio::spawn(axum::Server::bind(&socket_addr).serve(router.into_make_service()));
-
-    let mut attempt = 0;
-    while is_free_tcp(port) {
-        attempt += 1;
-        if attempt > 100 {
-            panic!("Failed to start server");
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
+    let mut instance = RegistryTestInstance::setup(tempdir.path(), conf, vec![]).await?;
+    instance.wait_for_ready().await?;
+    let url = instance.url.clone();
 
     let client = reqwest::Client::new();
 
+    let ecc = EccSecp256k1::default();
     let seckey = ecc.seckey_from_array([5; 32])?;
     let pubkey = ecc.derive_pubkey(&seckey);
     let pkh = ShaRmd160::digest(pubkey.array().into());
     let address = LotusAddress::new("lotus", Net::Regtest, Script::p2pkh(&pkh));
 
     let mut utxos = setup_bitcoind_coins(
-        instance.cli(),
+        instance.bitcoind.cli(),
         Network::XPI,
         3,
         address.as_str(),
@@ -209,11 +191,22 @@ async fn test_registry_http() -> Result<()> {
     )
     .await?;
 
+    // Missing 'Origin' header
+    let response = client
+        .put(format!("{}/metadata/{}", url, address))
+        .body(signed_metadata.encode_to_vec())
+        .header(CONTENT_TYPE, CONTENT_TYPE_PROTOBUF)
+        .send()
+        .await?;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    check_proto_error(response, "missing-origin", "'Origin' header missing", false).await?;
+
     // Invalid ECDSA signature: sig is empty
     let response = client
         .put(format!("{}/metadata/{}", url, address))
         .body(signed_metadata.encode_to_vec())
         .header(CONTENT_TYPE, CONTENT_TYPE_PROTOBUF)
+        .header(ORIGIN, "http://localhost")
         .send()
         .await?;
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
@@ -235,6 +228,7 @@ async fn test_registry_http() -> Result<()> {
         .put(format!("{}/metadata/{}", url, address))
         .body(signed_metadata.encode_to_vec())
         .header(CONTENT_TYPE, CONTENT_TYPE_PROTOBUF)
+        .header(ORIGIN, "http://localhost")
         .send()
         .await?;
     assert_eq!(response.status(), StatusCode::OK);
@@ -264,6 +258,7 @@ async fn test_registry_http() -> Result<()> {
         .put(format!("{}/metadata/{}", url, address))
         .body(signed_metadata.encode_to_vec())
         .header(CONTENT_TYPE, CONTENT_TYPE_PROTOBUF)
+        .header(ORIGIN, "http://localhost")
         .send()
         .await?;
     assert_eq!(response.status(), StatusCode::OK);
@@ -275,6 +270,8 @@ async fn test_registry_http() -> Result<()> {
             txid: vec![lotus_txid(&tx).as_slice().to_vec()],
         },
     );
+
+    instance.cleanup()?;
 
     Ok(())
 }

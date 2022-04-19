@@ -421,6 +421,7 @@ dependencies = [
  "bloom",
  "cashweb-http-utils",
  "cashweb-payload",
+ "futures",
  "hex",
  "json",
  "pretty_assertions",

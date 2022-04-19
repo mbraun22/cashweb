@@ -12,6 +12,7 @@ pub mod http;
 pub mod p2p;
 pub mod registry;
 pub mod store;
+pub mod test_instance;
 
 pub mod proto {
     //! Protobuf structs for SignedPayload.

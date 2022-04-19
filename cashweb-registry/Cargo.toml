@@ -8,6 +8,7 @@ bitcoinsuite-core = { path = "../../bitcoinsuite/bitcoinsuite-core" }
 bitcoinsuite-bitcoind = { path = "../../bitcoinsuite/bitcoinsuite-bitcoind" }
 bitcoinsuite-error = { path = "../../bitcoinsuite/bitcoinsuite-error" }
 bitcoinsuite-ecc-secp256k1 = { path = "../../bitcoinsuite/bitcoinsuite-ecc-secp256k1" }
+bitcoinsuite-test-utils = { path = "../../bitcoinsuite/bitcoinsuite-test-utils" }
 
 cashweb-http-utils = { path = "../cashweb-http-utils" }
 cashweb-payload = { path = "../cashweb-payload" }
@@ -17,6 +18,9 @@ axum = { version = "0.5", features = ["ws"] }
 
 # Bloom filter for an approximate set
 bloom = "0.3"
+
+# Common library for anything futures related
+futures = "0.3"
 
 # Build JSON objects
 json = "0.12"
@@ -48,7 +52,6 @@ prost-build = "0.10"
 
 [dev-dependencies]
 bitcoinsuite-ecc-secp256k1 = { path = "../../bitcoinsuite/bitcoinsuite-ecc-secp256k1" }
-bitcoinsuite-test-utils = { path = "../../bitcoinsuite/bitcoinsuite-test-utils" }
 bitcoinsuite-test-utils-blockchain = { path = "../../bitcoinsuite/bitcoinsuite-test-utils-blockchain" }
 
 # assert_eq! and assert_ne! with colored diffs

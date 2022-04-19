@@ -6,7 +6,8 @@ use bitcoinsuite_error::{report_to_details, ErrorMeta, Report};
 use cashweb_http_utils::error::details_to_status_proto;
 
 use crate::{
-    http::server::RegistryServerError, registry::RegistryError, store::pubkeyhash::PkhError,
+    http::server::RegistryServerError, p2p::relay_info::RelayInfoError, registry::RegistryError,
+    store::pubkeyhash::PkhError,
 };
 
 /// Newtype around [`Report`], implements [`IntoResponse`].
@@ -39,6 +40,8 @@ pub fn report_to_error_meta(report: &Report) -> Option<&dyn ErrorMeta> {
     } else if let Some(err) = report.downcast_ref::<RegistryError>() {
         Some(err)
     } else if let Some(err) = report.downcast_ref::<PkhError>() {
+        Some(err)
+    } else if let Some(err) = report.downcast_ref::<RelayInfoError>() {
         Some(err)
     } else if let Some(err) = cashweb_payload::error::report_to_error_meta(report) {
         Some(err)

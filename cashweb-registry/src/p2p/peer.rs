@@ -2,28 +2,39 @@
 
 use bitcoinsuite_core::Hashed;
 use bloom::{BloomFilter, ASMS};
-use reqwest::{header::ORIGIN, StatusCode};
-
-use crate::{
-    http::server::PutMetadataRequest, p2p::relay_info::RelayInfo, registry::PutMetadataResult,
+use cashweb_http_utils::protobuf::CONTENT_TYPE_PROTOBUF;
+use cashweb_payload::payload::SignedPayload;
+use reqwest::{
+    header::{CONTENT_TYPE, ORIGIN},
+    StatusCode,
 };
+
+use crate::{http::server::PutMetadataRequest, p2p::relay_info::RelayInfo, proto};
 
 /// A single registry peer.
 #[derive(Debug)]
 pub struct Peer {
     url: url::Url,
-    state: tokio::sync::Mutex<PeerState>,
+    /// Mutable state of a [`Peer`].
+    pub state: tokio::sync::Mutex<PeerState>,
 }
 
 /// The (mutable) state of a peer.
 pub struct PeerState {
-    filters: Vec<BloomFilter>,
-    cur_num_items: usize,
-    max_filter_items: usize,
-    max_filters: usize,
-    last_error: Option<reqwest::Error>,
-    last_status: Option<StatusCode>,
-    last_http_response: Option<Vec<u8>>,
+    /// Bloom filters of the payload hashes this peer has seen.
+    pub filters: Vec<BloomFilter>,
+    /// Number of items in the most recent Bloom filter.
+    pub cur_num_items: usize,
+    /// Max number of items in a Bloom filter.
+    pub max_filter_items: usize,
+    /// Max number of Bloom filters.
+    pub max_filters: usize,
+    /// Last reqwest error of this peer.
+    pub last_error: Option<reqwest::Error>,
+    /// Status code of the last HTTP response.
+    pub last_status: Option<StatusCode>,
+    /// Bytes of the last HTTP response.
+    pub last_http_response: Option<Vec<u8>>,
 }
 
 /// What action has been taken for an individual peer (for testing)
@@ -67,13 +78,13 @@ impl Peer {
         &self,
         relay_info: &RelayInfo,
         request: &PutMetadataRequest,
-        put_result: &PutMetadataResult,
+        signed_metadata: &SignedPayload<proto::AddressMetadata>,
         own_origin: &str,
         client: &reqwest::Client,
     ) -> RelayAction {
         use prost::Message;
         let mut state = self.state.lock().await;
-        let payload_hash = put_result.signed_metadata.payload_hash().as_slice();
+        let payload_hash = signed_metadata.payload_hash().as_slice();
         if self.should_skip_relay(relay_info) {
             state.add_known_payload(payload_hash);
             return RelayAction::SkippedOrigin;
@@ -83,6 +94,7 @@ impl Peer {
         }
         let response = client
             .put(format!("{}metadata/{}", self.url, request.address.as_str()))
+            .header(CONTENT_TYPE, CONTENT_TYPE_PROTOBUF)
             .header(ORIGIN, own_origin)
             .body(request.signed_metadata.encode_to_vec())
             .send()
@@ -181,7 +193,6 @@ mod tests {
         http::server::PutMetadataRequest,
         p2p::peer::{Peer, PeerState, RelayAction, RelayInfo},
         proto,
-        registry::{PutMetadataBlockchainAction, PutMetadataResult},
     };
 
     #[test]
@@ -268,28 +279,24 @@ mod tests {
             header_map: HeaderMap::new(),
             signed_metadata: cashweb_payload::proto::SignedPayload::default(),
         };
-        let put_result = PutMetadataResult {
-            txids: vec![],
-            blockchain_action: PutMetadataBlockchainAction::Broadcast,
-            signed_metadata: SignedPayload::parse_proto(&cashweb_payload::proto::SignedPayload {
-                pubkey: vec![0; 33],
-                sig: vec![],
-                sig_scheme: SignatureScheme::Ecdsa as i32,
-                payload: proto::AddressMetadata {
-                    timestamp: 1234,
-                    ..Default::default()
-                }
-                .encode_to_vec(),
+        let signed_metadata = SignedPayload::parse_proto(&cashweb_payload::proto::SignedPayload {
+            pubkey: vec![0; 33],
+            sig: vec![],
+            sig_scheme: SignatureScheme::Ecdsa as i32,
+            payload: proto::AddressMetadata {
+                timestamp: 1234,
                 ..Default::default()
-            })?,
-        };
+            }
+            .encode_to_vec(),
+            ..Default::default()
+        })?;
 
         // Metadata originates from peer
         let relay_info = RelayInfo {
             origin: url.clone(),
         };
         let relay_action = peer
-            .relay_to(&relay_info, &request, &put_result, own_origin, &client)
+            .relay_to(&relay_info, &request, &signed_metadata, own_origin, &client)
             .await;
         assert_eq!(relay_action, RelayAction::SkippedOrigin);
 
@@ -298,13 +305,13 @@ mod tests {
             origin: "http://anywhere.com".parse()?,
         };
         let relay_action = peer
-            .relay_to(&relay_info, &request, &put_result, own_origin, &client)
+            .relay_to(&relay_info, &request, &signed_metadata, own_origin, &client)
             .await;
         assert_eq!(relay_action, RelayAction::KnowsPayload);
 
         let offline_peer = Peer::new(offline_url.clone());
         let relay_action = offline_peer
-            .relay_to(&relay_info, &request, &put_result, own_origin, &client)
+            .relay_to(&relay_info, &request, &signed_metadata, own_origin, &client)
             .await;
         assert_eq!(relay_action, RelayAction::SendError);
         {
@@ -333,7 +340,7 @@ mod tests {
             .relay_to(
                 &relay_info,
                 &invalid_request,
-                &put_result,
+                &signed_metadata,
                 own_origin,
                 &client,
             )
@@ -359,7 +366,7 @@ mod tests {
             .relay_to(
                 &relay_info,
                 &valid_request,
-                &put_result,
+                &signed_metadata,
                 own_origin,
                 &client,
             )
@@ -380,7 +387,7 @@ mod tests {
             .relay_to(
                 &relay_info,
                 &valid_request,
-                &put_result,
+                &signed_metadata,
                 own_origin,
                 &client,
             )

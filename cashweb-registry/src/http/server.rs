@@ -15,6 +15,7 @@ use thiserror::Error;
 
 use crate::{
     http::error::HttpRegistryError,
+    p2p::{peers::Peers, relay_info::RelayInfo},
     proto,
     registry::{PutMetadataResult, Registry},
 };
@@ -24,6 +25,8 @@ use crate::{
 pub struct RegistryServer {
     /// [`Registry`] this server accesses.
     pub registry: Arc<Registry>,
+    /// [`Peers`] connected to the server.
+    pub peers: Arc<Peers>,
 }
 
 /// Relevant parts of an HTTP request to put new address metadata.
@@ -67,10 +70,21 @@ impl RegistryServer {
     }
 
     async fn put_metadata(&self, request: PutMetadataRequest) -> Result<PutMetadataResult> {
+        let relay_info = RelayInfo::parse_from_headers(&request.header_map)?;
         let result = self
             .registry
             .put_metadata(&request.address, &request.signed_metadata)
             .await?;
+        // Relay to peers in a separate task
+        tokio::spawn({
+            let signed_metadata = result.signed_metadata.clone();
+            let peers = Arc::clone(&self.peers);
+            async move {
+                peers
+                    .relay_metadata(&relay_info, &request, &signed_metadata)
+                    .await
+            }
+        });
         Ok(result)
     }
 }
