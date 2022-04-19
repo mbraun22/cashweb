@@ -4,7 +4,9 @@ use bitcoinsuite_core::Hashed;
 use bloom::{BloomFilter, ASMS};
 use reqwest::{header::ORIGIN, StatusCode};
 
-use crate::{http::server::PutMetadataRequest, registry::PutMetadataResult};
+use crate::{
+    http::server::PutMetadataRequest, p2p::relay_info::RelayInfo, registry::PutMetadataResult,
+};
 
 /// A single registry peer.
 #[derive(Debug)]
@@ -22,13 +24,6 @@ pub struct PeerState {
     last_error: Option<reqwest::Error>,
     last_status: Option<StatusCode>,
     last_http_response: Option<Vec<u8>>,
-}
-
-/// Data extracted from a request necessary for relaying.
-#[derive(Debug, Clone)]
-pub struct RelayInfo {
-    /// 'Origin' header of the incoming metadata PUT request.
-    pub origin: url::Url,
 }
 
 /// What action has been taken for an individual peer (for testing)
