@@ -3,7 +3,7 @@
 use std::fmt::Display;
 
 use bitcoinsuite_core::{Bytes, Hashed, LotusAddress, Net, ScriptVariant, ShaRmd160, LOTUS_PREFIX};
-use bitcoinsuite_error::{ErrorMeta, Result};
+use bitcoinsuite_error::{ErrorMeta, Result, WrapErr};
 use thiserror::Error;
 
 /// Hash algorithm supported by the keyserver.
@@ -21,6 +21,15 @@ pub struct PubKeyHash {
     hash: Bytes,
 }
 
+/// Struct containing a timestamp and a public key hash.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct TimePkh {
+    /// Timestamp of the pair.
+    pub timestamp: i64,
+    /// Public key hash of the pair.
+    pub pkh: PubKeyHash,
+}
+
 /// Errors relating to `PubKeyHash`.
 #[derive(Debug, Error, ErrorMeta, Clone, PartialEq)]
 pub enum PkhError {
@@ -35,11 +44,6 @@ pub enum PkhError {
         /// Actual length of the given hash.
         actual: usize,
     },
-
-    /// Provided string doesn't name a known [`PkhAlgorithm`].
-    #[invalid_client_input()]
-    #[error("Invalid public key hash algorithm {0:?}, expected \"p2pkh\"")]
-    InvalidPkhAlgorithm(String),
 
     /// Invalid lotus address in request.
     #[invalid_user_input()]
@@ -65,6 +69,21 @@ pub enum PkhError {
     #[invalid_client_input()]
     #[error("Unsupported address script variant: {0:?}")]
     UnsupportedScriptVariant(ScriptVariant),
+
+    /// Invalid byte for [`PkhAlgorithm`].
+    #[critical()]
+    #[error("Invalid byte for PkhAlgorithm: {0}")]
+    InvalidPkhAlgorithmByte(u8),
+
+    /// Timestamp in [`TimePkh`] failed to decode.
+    #[critical()]
+    #[error("TimePkh timestamp failed to decode")]
+    InvalidTimePkhTimestamp,
+
+    /// [`PkhAlgorithm`] in [`TimePkh`] failed to decode.
+    #[critical()]
+    #[error("TimePkh PkhAlgorithm failed to decode")]
+    InvalidTimePkhAlgorithm,
 }
 
 use self::PkhError::*;
@@ -73,6 +92,13 @@ impl PkhAlgorithm {
     pub(crate) fn to_storage_byte(self) -> u8 {
         match self {
             PkhAlgorithm::Sha256Ripemd160 => 1,
+        }
+    }
+
+    pub(crate) fn from_storage_byte(byte: u8) -> Option<Self> {
+        match byte {
+            1 => Some(PkhAlgorithm::Sha256Ripemd160),
+            _ => None,
         }
     }
 
@@ -160,6 +186,31 @@ impl Display for PkhAlgorithm {
     }
 }
 
+impl TimePkh {
+    pub(crate) fn to_storage_bytes(&self) -> Bytes {
+        let mut bytes = Vec::with_capacity(self.pkh.hash().len() + 9);
+        bytes.extend_from_slice(&self.timestamp.to_be_bytes());
+        bytes.push(self.pkh.algorithm().to_storage_byte());
+        bytes.extend_from_slice(self.pkh.hash());
+        bytes.into()
+    }
+
+    pub(crate) fn from_storage_bytes(mut bytes: Bytes) -> Result<Self> {
+        let timestamp: [u8; 8] = bytes
+            .split_to(8)
+            .wrap_err(InvalidTimePkhTimestamp)?
+            .as_ref()
+            .try_into()
+            .unwrap();
+        let timestamp = i64::from_be_bytes(timestamp);
+        let pkh_algorithm = bytes.split_to(1).wrap_err(InvalidTimePkhAlgorithm)?[0];
+        let pkh_algorithm = PkhAlgorithm::from_storage_byte(pkh_algorithm)
+            .ok_or(InvalidPkhAlgorithmByte(pkh_algorithm))?;
+        let pkh = PubKeyHash::new(pkh_algorithm, bytes)?;
+        Ok(TimePkh { timestamp, pkh })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use bitcoinsuite_error::Result;
@@ -171,6 +222,11 @@ mod tests {
         let _ = bitcoinsuite_error::install();
         assert_eq!(PkhAlgorithm::Sha256Ripemd160.hash_len(), 20);
         assert_eq!(PkhAlgorithm::Sha256Ripemd160.to_storage_byte(), 1);
+        assert_eq!(
+            PkhAlgorithm::from_storage_byte(1),
+            Some(PkhAlgorithm::Sha256Ripemd160),
+        );
+        assert_eq!(PkhAlgorithm::from_storage_byte(0), None);
         Ok(())
     }
 

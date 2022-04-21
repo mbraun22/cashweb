@@ -11,6 +11,7 @@ use crate::store::metadata::DbMetadata;
 // We collect the column family constants here so we have a nice overview.
 // This makes it easier to keep cf names consistent and non-conflicting.
 pub(crate) const CF_METADATA: &str = "metadata";
+pub(crate) const CF_PKH_BY_TIME: &str = "pkh_by_time";
 
 pub(crate) type CF = rocksdb::ColumnFamily;
 
@@ -76,6 +77,7 @@ impl Db {
         self.db.get_pinned_cf(cf, key).wrap_err(RocksDb)
     }
 
+    #[cfg(test)]
     pub(crate) fn put(
         &self,
         cf: &CF,
@@ -83,6 +85,15 @@ impl Db {
         value: impl AsRef<[u8]>,
     ) -> Result<()> {
         self.db.put_cf(cf, key, value).wrap_err(RocksDb)
+    }
+
+    pub(crate) fn rocksdb(&self) -> &rocksdb::DB {
+        &self.db
+    }
+
+    pub(crate) fn write_batch(&self, write_batch: rocksdb::WriteBatch) -> Result<()> {
+        self.db.write(write_batch)?;
+        Ok(())
     }
 }
 

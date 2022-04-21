@@ -3,7 +3,7 @@
 use bitcoinsuite_bitcoind::{rpc_client::BitcoindRpcClient, BitcoindError};
 use bitcoinsuite_core::{lotus_txid, Hashed, LotusAddress, Net, Sha256d};
 use bitcoinsuite_ecc_secp256k1::EccSecp256k1;
-use bitcoinsuite_error::{ErrorMeta, Result, WrapErr};
+use bitcoinsuite_error::{ErrorMeta, Result};
 use cashweb_payload::payload::{BurnTx, SignedPayload};
 use thiserror::Error;
 
@@ -100,11 +100,6 @@ pub enum RegistryError {
         /// Malleated tx hex with different input signatures.
         actual: String,
     },
-
-    /// Database contains an invalid protobuf MetadataEntry.
-    #[critical()]
-    #[error("Inconsistent db: Invalid SignedPayload in DB")]
-    InvalidSignedPayloadInDb,
 }
 
 use self::RegistryError::*;
@@ -138,8 +133,6 @@ impl Registry {
             Some(signed_payload) => signed_payload,
             None => return Ok(None),
         };
-        let signed_payload =
-            SignedPayload::parse_proto(&signed_payload).wrap_err(InvalidSignedPayloadInDb)?;
         Ok(Some(signed_payload))
     }
 
@@ -234,7 +227,7 @@ impl Registry {
         }
 
         // Write new metadata into the database
-        self.db.metadata().put(&pkh, &signed_metadata.to_proto())?;
+        self.db.metadata().put(&pkh, &signed_metadata)?;
         Ok(PutMetadataResult {
             txids,
             blockchain_action,
