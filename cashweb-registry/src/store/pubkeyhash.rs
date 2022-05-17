@@ -2,7 +2,9 @@
 
 use std::fmt::Display;
 
-use bitcoinsuite_core::{Bytes, Hashed, LotusAddress, Net, ScriptVariant, ShaRmd160, LOTUS_PREFIX};
+use bitcoinsuite_core::{
+    Bytes, Hashed, LotusAddress, Net, Script, ScriptVariant, ShaRmd160, LOTUS_PREFIX,
+};
 use bitcoinsuite_error::{ErrorMeta, Result, WrapErr};
 use thiserror::Error;
 
@@ -159,6 +161,17 @@ impl PubKeyHash {
                 PubKeyHash::new(PkhAlgorithm::Sha256Ripemd160, hash.as_slice().into())
             }
             variant => Err(UnsupportedScriptVariant(variant).into()),
+        }
+    }
+
+    /// Map the PubKeyHash to the corresponding Lotus address.
+    pub fn to_address(&self, net: Net) -> LotusAddress {
+        match self.algorithm {
+            PkhAlgorithm::Sha256Ripemd160 => LotusAddress::new(
+                LOTUS_PREFIX,
+                net,
+                Script::p2pkh(&ShaRmd160::from_slice(&self.hash).expect("Impossible hash length")),
+            ),
         }
     }
 

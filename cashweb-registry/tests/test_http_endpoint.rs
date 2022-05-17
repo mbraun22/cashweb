@@ -271,6 +271,111 @@ async fn test_registry_http() -> Result<()> {
         },
     );
 
+    // Test querying a range of metdata now.
+    let response = client
+        .get(format!("{}/metadata?start_timestamp=abc", url))
+        .send()
+        .await?;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    check_proto_error(
+        response,
+        "invalid-query-param",
+        "Invalid start_timestamp: \"abc\" is invalid: invalid digit found in string",
+        false,
+    )
+    .await?;
+
+    let response = client
+        .get(format!("{}/metadata?end_timestamp=abc", url))
+        .send()
+        .await?;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    check_proto_error(
+        response,
+        "invalid-query-param",
+        "Invalid end_timestamp: \"abc\" is invalid: invalid digit found in string",
+        false,
+    )
+    .await?;
+
+    let response = client
+        .get(format!("{}/metadata?num_items=abc", url))
+        .send()
+        .await?;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    check_proto_error(
+        response,
+        "invalid-query-param",
+        "Invalid num_items: \"abc\" is invalid: invalid digit found in string",
+        false,
+    )
+    .await?;
+
+    let expected_response = proto::GetMetadataRangeResponse {
+        entries: vec![proto::GetMetadataRangeEntry {
+            address: address.to_string(),
+            signed_payload: Some(signed_metadata),
+        }],
+    };
+    let empty_response = proto::GetMetadataRangeResponse { entries: vec![] };
+
+    let response = client.get(format!("{}/metadata", url)).send().await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        proto::GetMetadataRangeResponse::decode(&mut response.bytes().await?)?,
+        expected_response,
+    );
+
+    let response = client
+        .get(format!("{}/metadata?start_timestamp=1234", url))
+        .send()
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        proto::GetMetadataRangeResponse::decode(&mut response.bytes().await?)?,
+        expected_response,
+    );
+
+    let response = client
+        .get(format!("{}/metadata?start_timestamp=1235", url))
+        .send()
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        proto::GetMetadataRangeResponse::decode(&mut response.bytes().await?)?,
+        empty_response,
+    );
+
+    let response = client
+        .get(format!("{}/metadata?end_timestamp=1235", url))
+        .send()
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        proto::GetMetadataRangeResponse::decode(&mut response.bytes().await?)?,
+        expected_response,
+    );
+
+    let response = client
+        .get(format!("{}/metadata?end_timestamp=1234", url))
+        .send()
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        proto::GetMetadataRangeResponse::decode(&mut response.bytes().await?)?,
+        empty_response,
+    );
+
+    let response = client
+        .get(format!("{}/metadata?num_items=0", url))
+        .send()
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        proto::GetMetadataRangeResponse::decode(&mut response.bytes().await?)?,
+        empty_response,
+    );
+
     instance.cleanup()?;
 
     Ok(())

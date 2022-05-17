@@ -1,5 +1,6 @@
 syntax = "proto3";
 package cashweb.registry;
+import "payload.proto";
 
 // AddressEntry is an individual piece of structured data provided by wallet authors.
 message AddressEntry {
@@ -42,4 +43,18 @@ message Peers {
 message PutAddressMetadataResponse {
     // Transaction IDs of the burn txs.
     repeated bytes txid = 1;
+}
+
+// One entry of [`GetMetadataRangeResponse`].
+message GetMetadataRangeEntry {
+    // Address the [`SignedPayload`] is stored for.
+    string address = 1;
+    // Signed payload associated with the address.
+    cashweb.payload.SignedPayload signed_payload = 2;
+}
+
+// Response from getting a range of address metadata.
+message GetMetadataRangeResponse {
+    // Entries of this response.
+    repeated GetMetadataRangeEntry entries = 1;
 }

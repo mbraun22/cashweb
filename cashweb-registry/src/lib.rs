@@ -14,6 +14,7 @@ pub mod registry;
 pub mod store;
 pub mod test_instance;
 
+use cashweb_payload::proto as payload;
 pub mod proto {
     //! Protobuf structs for SignedPayload.
     include!(concat!(env!("OUT_DIR"), "/cashweb.registry.rs"));

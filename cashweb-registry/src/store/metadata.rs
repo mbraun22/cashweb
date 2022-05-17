@@ -50,7 +50,7 @@ impl<'a> DbMetadata<'a> {
         }
     }
 
-    /// Store a [`proto::SignedPayload`] in the db.
+    /// Store a [`cashweb_payload::proto::SignedPayload`] in the db.
     pub fn put(
         &self,
         pkh: &PubKeyHash,
@@ -81,7 +81,7 @@ impl<'a> DbMetadata<'a> {
         Ok(())
     }
 
-    /// Retrieve a [`proto::SignedPayload`] from the db.
+    /// Retrieve a [`cashweb_payload::proto::SignedPayload`] from the db.
     pub fn get(&self, pkh: &PubKeyHash) -> Result<Option<SignedPayload<proto::AddressMetadata>>> {
         use prost::Message;
         let serialized_entry = match self.db.get(self.cf_metadata, &pkh.to_storage_bytes())? {

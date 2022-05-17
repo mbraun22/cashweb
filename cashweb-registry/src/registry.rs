@@ -41,7 +41,7 @@ pub struct PutMetadataResult {
 #[derive(Debug, Clone, PartialEq)]
 pub struct GetMetadataRangeResult {
     /// Pairs of pubkey hashes and associated payload, ordered by timestamp.
-    pub entries: Vec<(PubKeyHash, SignedPayload<proto::AddressMetadata>)>,
+    pub entries: Vec<(LotusAddress, SignedPayload<proto::AddressMetadata>)>,
 }
 
 /// Which action happened with the blockchain when putting address metadata.
@@ -309,7 +309,7 @@ impl Registry {
             if metadata.payload().timestamp != time_pkh.timestamp {
                 continue; // ignore stale metadata
             }
-            entries.push((time_pkh.pkh, metadata));
+            entries.push((time_pkh.pkh.to_address(self.net), metadata));
         }
         Ok(GetMetadataRangeResult { entries })
     }
@@ -827,7 +827,7 @@ mod tests {
             registry.put_metadata(&address, &signed_metadata).await?;
             // Even gets overridden by odd
             entries.push((
-                pkh,
+                pkh.to_address(Net::Regtest),
                 SignedPayload::<proto::AddressMetadata>::parse_proto(&signed_metadata)?,
             ));
         }
@@ -857,7 +857,7 @@ mod tests {
             cf_pkh_by_time,
             TimePkh {
                 timestamp: 1000,
-                pkh: entries[3].0.clone(),
+                pkh: PubKeyHash::from_address(&entries[3].0, Net::Regtest)?,
             }
             .to_storage_bytes(),
             &[],

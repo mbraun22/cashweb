@@ -1,10 +1,10 @@
 //! Module containing [`RegistryServer`] to run the registry HTTP server.
 
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use axum::{
     body::Body,
-    extract::Path,
+    extract::{Path, Query},
     http::{HeaderMap, Response},
     routing, Extension, Router,
 };
@@ -52,6 +52,18 @@ pub enum RegistryServerError {
     #[not_found()]
     #[error("Not found: No address metadata for {0} in registry")]
     AddressMetadataNotFound(LotusAddress),
+
+    /// A query param is not valid.
+    #[invalid_client_input()]
+    #[error("Invalid {param}: {value:?} is invalid: {msg}")]
+    InvalidQueryParam {
+        /// Name of the query param in question.
+        param: &'static str,
+        /// Value provided for the query param.
+        value: String,
+        /// Why the value is invalid.
+        msg: String,
+    },
 }
 
 use self::RegistryServerError::*;
@@ -60,6 +72,7 @@ impl RegistryServer {
     /// Turn this registry server into a [`Router`].
     pub fn into_router(self) -> Router {
         Router::new()
+            .route("/metadata", routing::get(handle_get_metadata_range))
             .route(
                 "/metadata/:addr",
                 routing::put(handle_put_registry)
@@ -128,4 +141,65 @@ async fn handle_get_registry(
         .get_metadata(&address)?
         .ok_or(AddressMetadataNotFound(address))?;
     Ok(Protobuf(signed_payload.to_proto()))
+}
+
+async fn handle_get_metadata_range(
+    Query(params): Query<HashMap<String, String>>,
+    Extension(server): Extension<RegistryServer>,
+) -> Result<Protobuf<proto::GetMetadataRangeResponse>, HttpRegistryError> {
+    const START_TIMESTAMP: &str = "start_timestamp";
+    const END_TIMESTAMP: &str = "end_timestamp";
+    const NUM_ITEMS: &str = "num_items";
+    const MAX_NUM_ITEMS: usize = 100;
+    let start_timestamp = match params.get(START_TIMESTAMP) {
+        Some(start_timestamp) => {
+            start_timestamp
+                .parse::<i64>()
+                .map_err(|err| InvalidQueryParam {
+                    param: START_TIMESTAMP,
+                    value: start_timestamp.to_string(),
+                    msg: err.to_string(),
+                })?
+        }
+        None => 0,
+    };
+    let end_timestamp = match params.get(END_TIMESTAMP) {
+        Some(end_timestamp) => {
+            Some(
+                end_timestamp
+                    .parse::<i64>()
+                    .map_err(|err| InvalidQueryParam {
+                        param: END_TIMESTAMP,
+                        value: end_timestamp.to_string(),
+                        msg: err.to_string(),
+                    })?,
+            )
+        }
+        None => None,
+    };
+    let num_items = match params.get(NUM_ITEMS) {
+        Some(num_items) => num_items
+            .parse::<usize>()
+            .map_err(|err| InvalidQueryParam {
+                param: NUM_ITEMS,
+                value: num_items.to_string(),
+                msg: err.to_string(),
+            })?
+            .min(MAX_NUM_ITEMS),
+        None => MAX_NUM_ITEMS,
+    };
+    let metadata_range =
+        server
+            .registry
+            .get_metadata_range(start_timestamp, end_timestamp, num_items)?;
+    Ok(Protobuf(proto::GetMetadataRangeResponse {
+        entries: metadata_range
+            .entries
+            .into_iter()
+            .map(|(address, signed_payload)| proto::GetMetadataRangeEntry {
+                address: address.as_str().to_string(),
+                signed_payload: Some(signed_payload.to_proto()),
+            })
+            .collect(),
+    }))
 }
