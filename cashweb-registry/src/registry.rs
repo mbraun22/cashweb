@@ -37,6 +37,13 @@ pub struct PutMetadataResult {
     pub signed_metadata: SignedPayload<proto::AddressMetadata>,
 }
 
+/// Result of fetching a range of metadata by timestamp.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GetMetadataRangeResult {
+    /// Pairs of pubkey hashes and associated payload, ordered by timestamp.
+    pub entries: Vec<(PubKeyHash, SignedPayload<proto::AddressMetadata>)>,
+}
+
 /// Which action happened with the blockchain when putting address metadata.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum PutMetadataBlockchainAction {
@@ -276,6 +283,36 @@ impl Registry {
             }
         }
     }
+
+    /// Get all metadata entries in the given range.
+    pub fn get_metadata_range(
+        &self,
+        start_timestamp: i64,
+        end_timestamp: Option<i64>,
+        max_num_items: usize,
+    ) -> Result<GetMetadataRangeResult> {
+        let mut entries = Vec::new();
+        for time_pkh in self.db.metadata().iter_by_time(start_timestamp) {
+            if entries.len() == max_num_items {
+                break;
+            }
+            let time_pkh = time_pkh?;
+            if let Some(end_timestamp) = end_timestamp {
+                if time_pkh.timestamp >= end_timestamp {
+                    break;
+                }
+            }
+            let metadata = match self.db.metadata().get(&time_pkh.pkh)? {
+                Some(metadata) => metadata,
+                None => continue, // ignore stale metadata (should be impossible but doesn't matter)
+            };
+            if metadata.payload().timestamp != time_pkh.timestamp {
+                continue; // ignore stale metadata
+            }
+            entries.push((time_pkh.pkh, metadata));
+        }
+        Ok(GetMetadataRangeResult { entries })
+    }
 }
 
 #[cfg(test)]
@@ -292,7 +329,7 @@ mod tests {
     use bitcoinsuite_ecc_secp256k1::EccSecp256k1;
     use bitcoinsuite_error::Result;
     use bitcoinsuite_test_utils::bin_folder;
-    use bitcoinsuite_test_utils_blockchain::setup_bitcoind_coins;
+    use bitcoinsuite_test_utils_blockchain::{build_tx, setup_bitcoind_coins};
     use cashweb_payload::{
         payload::{ParseSignedPayloadError, SignatureScheme, SignedPayload},
         verify::{build_commitment_script, ValidateSignedPayloadError},
@@ -302,10 +339,13 @@ mod tests {
 
     use crate::{
         proto,
-        registry::{PutMetadataBlockchainAction, PutMetadataResult, Registry, RegistryError},
+        registry::{
+            GetMetadataRangeResult, PutMetadataBlockchainAction, PutMetadataResult, Registry,
+            RegistryError,
+        },
         store::{
-            db::Db,
-            pubkeyhash::{PkhAlgorithm, PubKeyHash},
+            db::{Db, CF_PKH_BY_TIME},
+            pubkeyhash::{PkhAlgorithm, PubKeyHash, TimePkh},
         },
     };
 
@@ -692,6 +732,140 @@ mod tests {
         }
 
         instance.cleanup()?;
+
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_registry_metadata_range() -> Result<()> {
+        let _ = bitcoinsuite_error::install();
+        let tempdir = tempdir::TempDir::new("cashweb-registry--registry")?;
+        let db = Db::open(tempdir.path().join("db.rocksdb"))?;
+
+        let conf = BitcoindConf::from_chain_regtest(
+            bin_folder(),
+            BitcoindChain::XPI,
+            vec![OsString::from("-txindex")],
+        )?;
+        let mut instance = BitcoindInstance::setup(conf)?;
+        instance.wait_for_ready()?;
+        let bitcoind = instance.rpc_client();
+
+        let registry = Registry {
+            db,
+            ecc: EccSecp256k1::default(),
+            bitcoind: bitcoind.clone(),
+            net: Net::Regtest,
+        };
+
+        // Generate a few anyone can spend coins
+        let anyone_script = Script::from_slice(&[0x51]);
+        let anyone_address = LotusAddress::new(
+            "lotus",
+            Net::Regtest,
+            Script::p2sh(&ShaRmd160::digest(anyone_script.bytecode().clone())),
+        );
+        let mut utxos = setup_bitcoind_coins(
+            instance.cli(),
+            Network::XPI,
+            10,
+            anyone_address.as_str(),
+            &anyone_address.script().hex(),
+        )?;
+
+        let items = registry.get_metadata_range(0, None, 10)?;
+        assert_eq!(items, GetMetadataRangeResult { entries: vec![] });
+
+        let mut entries = Vec::new();
+        for i in 2u8..=6 {
+            let seckey = registry.ecc.seckey_from_array([i / 2; 32])?;
+            let pubkey = registry.ecc.derive_pubkey(&seckey);
+            let address = LotusAddress::new(
+                "lotus",
+                Net::Regtest,
+                Script::p2pkh(&ShaRmd160::digest(pubkey.array().into())),
+            );
+            let pkh = PkhAlgorithm::Sha256Ripemd160.hash_pubkey(pubkey.array());
+
+            // Build valid address metadata
+            let address_metadata = proto::AddressMetadata {
+                timestamp: 1000 + i as i64,
+                ttl: 10,
+                entries: vec![],
+            };
+            let payload_hash = Sha256::digest(address_metadata.encode_to_vec().into());
+
+            // Build burn commitment tx
+            let (outpoint, amount) = utxos.pop().unwrap();
+            let burn_amount = amount - 10_000;
+            let tx = build_tx(
+                outpoint,
+                &anyone_script,
+                vec![TxOutput {
+                    value: burn_amount,
+                    script: build_commitment_script(pubkey.array(), &payload_hash),
+                }],
+            );
+
+            // Sign address metadata
+            let signed_metadata = cashweb_payload::proto::SignedPayload {
+                pubkey: pubkey.array().to_vec(),
+                sig: registry
+                    .ecc
+                    .sign(&seckey, payload_hash.byte_array().clone())
+                    .to_vec(),
+                sig_scheme: SignatureScheme::Ecdsa.into(),
+                payload: address_metadata.encode_to_vec(),
+                payload_hash: payload_hash.as_slice().to_vec(),
+                burn_amount,
+                burn_txs: vec![cashweb_payload::proto::BurnTx {
+                    tx: tx.ser().to_vec(),
+                    burn_idx: 0,
+                }],
+            };
+
+            registry.put_metadata(&address, &signed_metadata).await?;
+            // Even gets overridden by odd
+            entries.push((
+                pkh,
+                SignedPayload::<proto::AddressMetadata>::parse_proto(&signed_metadata)?,
+            ));
+        }
+
+        let index_entries = |indices: &[usize]| GetMetadataRangeResult {
+            entries: indices.iter().map(|&idx| entries[idx].clone()).collect(),
+        };
+
+        let items = registry.get_metadata_range(0, None, 1)?;
+        assert_eq!(items, index_entries(&[1]));
+
+        let items = registry.get_metadata_range(0, None, 2)?;
+        assert_eq!(items, index_entries(&[1, 3]));
+
+        let items = registry.get_metadata_range(0, None, 3)?;
+        assert_eq!(items, index_entries(&[1, 3, 4]));
+
+        let items = registry.get_metadata_range(0, Some(1006), 3)?;
+        assert_eq!(items, index_entries(&[1, 3]));
+
+        let items = registry.get_metadata_range(1004, Some(1006), 3)?;
+        assert_eq!(items, index_entries(&[3]));
+
+        // Add stale timestamp for some pkh
+        let cf_pkh_by_time = registry.db.cf(CF_PKH_BY_TIME)?;
+        registry.db.rocksdb().put_cf(
+            cf_pkh_by_time,
+            TimePkh {
+                timestamp: 1000,
+                pkh: entries[3].0.clone(),
+            }
+            .to_storage_bytes(),
+            &[],
+        )?;
+
+        // Stale entry gets ignored
+        let items = registry.get_metadata_range(0, None, 10)?;
+        assert_eq!(items, index_entries(&[1, 3, 4]));
 
         Ok(())
     }

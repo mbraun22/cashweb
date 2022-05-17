@@ -241,6 +241,74 @@ mod tests {
     }
 
     #[test]
+    fn test_iter_by_time() -> Result<()> {
+        let _ = bitcoinsuite_error::install();
+        let tempdir = tempdir::TempDir::new("cashweb-registry-store--metadata")?;
+        let db = Db::open(tempdir.path().join("db.rocksdb"))?;
+
+        let mut pkhs = Vec::new();
+        for i in 0u8..50 {
+            let pkh = PubKeyHash::new(PkhAlgorithm::Sha256Ripemd160, [i / 2; 20].into())?;
+            let address_metadata = proto::AddressMetadata {
+                timestamp: 1000 + i as i64,
+                ttl: 10,
+                entries: vec![],
+            };
+            let entry_proto = cashweb_payload::proto::SignedPayload {
+                pubkey: vec![2; 33],
+                sig: vec![4, 5, 6, 7, 8],
+                sig_scheme: SignatureScheme::Ecdsa.into(),
+                payload: address_metadata.encode_to_vec(),
+                payload_hash: vec![],
+                burn_amount: 0,
+                burn_txs: vec![],
+            };
+            let entry = SignedPayload::parse_proto(&entry_proto)?;
+            db.metadata().put(&pkh, &entry)?;
+            // even gets overridden by odd
+            if i % 2 == 1 {
+                pkhs.push(pkh);
+            }
+        }
+
+        // i = 0 got overridden by i = 1
+        assert_eq!(
+            db.metadata().iter_by_time(0).next().transpose()?,
+            Some(TimePkh {
+                timestamp: 1001,
+                pkh: pkhs[0].clone(),
+            }),
+        );
+        assert_eq!(
+            db.metadata().iter_by_time(1001).next().transpose()?,
+            Some(TimePkh {
+                timestamp: 1001,
+                pkh: pkhs[0].clone(),
+            }),
+        );
+
+        // Get all odd timestamps after (including) 1020
+        assert_eq!(
+            db.metadata()
+                .iter_by_time(1020)
+                .map(Result::unwrap)
+                .collect::<Vec<_>>(),
+            pkhs[10..]
+                .iter()
+                .enumerate()
+                .map(|(idx, pkh)| {
+                    TimePkh {
+                        timestamp: 1021 + idx as i64 * 2,
+                        pkh: pkh.clone(),
+                    }
+                })
+                .collect::<Vec<_>>(),
+        );
+
+        Ok(())
+    }
+
+    #[test]
     fn test_db_metadata_debug() -> Result<()> {
         let _ = bitcoinsuite_error::install();
         let tempdir = tempdir::TempDir::new("cashweb-registry-store--metadata-debug")?;
