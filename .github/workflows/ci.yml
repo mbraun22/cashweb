@@ -93,6 +93,7 @@ jobs:
     - name: Build and install cargo make
       working-directory: ./cargo-make
       run: |
+        CARGO_TARGET_DIR=$(pwd)/../target cargo clean
         CARGO_TARGET_DIR=$(pwd)/../target cargo install --path . --target-dir $(pwd)/../target
       shell: bash
 

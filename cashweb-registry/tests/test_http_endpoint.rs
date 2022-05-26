@@ -4,7 +4,7 @@ use bitcoinsuite_bitcoind::instance::{BitcoindChain, BitcoindConf};
 use bitcoinsuite_core::{
     ecc::Ecc, lotus_txid, BitcoinCode, Hashed, LotusAddress, Net, Network, P2PKHSignatory, Script,
     SequenceNo, Sha256, ShaRmd160, SigHashType, SignData, SignField, TxBuilder, TxBuilderInput,
-    TxBuilderOutput, TxInput, TxOutput,
+    TxBuilderOutput, TxInput, TxOutput, LOTUS_PREFIX,
 };
 use bitcoinsuite_ecc_secp256k1::EccSecp256k1;
 use bitcoinsuite_error::Result;
@@ -311,6 +311,19 @@ async fn test_registry_http() -> Result<()> {
     )
     .await?;
 
+    let response = client
+        .get(format!("{}/metadata?last_address=abc", url))
+        .send()
+        .await?;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    check_proto_error(
+        response,
+        "invalid-query-param",
+        "Invalid last_address: \"abc\" is invalid: Missing net character",
+        false,
+    )
+    .await?;
+
     let expected_response = proto::GetMetadataRangeResponse {
         entries: vec![proto::GetMetadataRangeEntry {
             address: address.to_string(),
@@ -374,6 +387,53 @@ async fn test_registry_http() -> Result<()> {
     assert_eq!(
         proto::GetMetadataRangeResponse::decode(&mut response.bytes().await?)?,
         empty_response,
+    );
+
+    // Timestamp before entry (last_address takes no effect)
+    let response = client
+        .get(format!(
+            "{}/metadata?start_timestamp={}&last_address={}",
+            url, 1233, address
+        ))
+        .send()
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        proto::GetMetadataRangeResponse::decode(&mut response.bytes().await?)?,
+        expected_response,
+    );
+
+    // Timestamp at entry, skipped as it's equal (or greater) than the last_address
+    let response = client
+        .get(format!(
+            "{}/metadata?start_timestamp={}&last_address={}",
+            url, 1234, address
+        ))
+        .send()
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        proto::GetMetadataRangeResponse::decode(&mut response.bytes().await?)?,
+        empty_response,
+    );
+
+    // Timestamp at entry, but not skipped as last_address pkh is less than entry's
+    let empty_address = LotusAddress::new(
+        LOTUS_PREFIX,
+        Net::Regtest,
+        Script::p2pkh(&ShaRmd160::new([0; 20])),
+    );
+    let response = client
+        .get(format!(
+            "{}/metadata?start_timestamp={}&last_address={}",
+            url, 1234, empty_address
+        ))
+        .send()
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        proto::GetMetadataRangeResponse::decode(&mut response.bytes().await?)?,
+        expected_response,
     );
 
     instance.cleanup()?;

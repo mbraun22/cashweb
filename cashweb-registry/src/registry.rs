@@ -289,9 +289,13 @@ impl Registry {
         &self,
         start_timestamp: i64,
         end_timestamp: Option<i64>,
+        last_address: Option<&LotusAddress>,
         max_num_items: usize,
     ) -> Result<GetMetadataRangeResult> {
         let mut entries = Vec::new();
+        let last_pkh = last_address
+            .map(|addr| PubKeyHash::from_address(addr, self.net))
+            .transpose()?;
         for time_pkh in self.db.metadata().iter_by_time(start_timestamp) {
             if entries.len() == max_num_items {
                 break;
@@ -300,6 +304,14 @@ impl Registry {
             if let Some(end_timestamp) = end_timestamp {
                 if time_pkh.timestamp >= end_timestamp {
                     break;
+                }
+            }
+            if let Some(last_pkh) = &last_pkh {
+                // Skip pkhs that we already know for the start timestamp
+                if time_pkh.timestamp == start_timestamp
+                    && time_pkh.pkh.to_storage_bytes() <= last_pkh.to_storage_bytes()
+                {
+                    continue;
                 }
             }
             let metadata = match self.db.metadata().get(&time_pkh.pkh)? {
@@ -773,12 +785,20 @@ mod tests {
             &anyone_address.script().hex(),
         )?;
 
-        let items = registry.get_metadata_range(0, None, 10)?;
+        let items = registry.get_metadata_range(0, None, None, 10)?;
         assert_eq!(items, GetMetadataRangeResult { entries: vec![] });
 
         let mut entries = Vec::new();
-        for i in 2u8..=6 {
-            let seckey = registry.ecc.seckey_from_array([i / 2; 32])?;
+        let test_cases = [
+            (1, 1000),
+            (2, 1000),
+            (2, 1001),
+            (3, 1001),
+            (4, 1001),
+            (3, 1002),
+        ];
+        for (seckey_byte, timestamp) in test_cases {
+            let seckey = registry.ecc.seckey_from_array([seckey_byte; 32])?;
             let pubkey = registry.ecc.derive_pubkey(&seckey);
             let address = LotusAddress::new(
                 "lotus",
@@ -789,7 +809,7 @@ mod tests {
 
             // Build valid address metadata
             let address_metadata = proto::AddressMetadata {
-                timestamp: 1000 + i as i64,
+                timestamp,
                 ttl: 10,
                 entries: vec![],
             };
@@ -836,20 +856,27 @@ mod tests {
             entries: indices.iter().map(|&idx| entries[idx].clone()).collect(),
         };
 
-        let items = registry.get_metadata_range(0, None, 1)?;
-        assert_eq!(items, index_entries(&[1]));
+        let items = registry.get_metadata_range(0, None, None, 1)?;
+        assert_eq!(items, index_entries(&[0]));
 
-        let items = registry.get_metadata_range(0, None, 2)?;
-        assert_eq!(items, index_entries(&[1, 3]));
+        let items = registry.get_metadata_range(0, None, None, 4)?;
+        assert_eq!(items, index_entries(&[0, 4, 2, 5]));
 
-        let items = registry.get_metadata_range(0, None, 3)?;
-        assert_eq!(items, index_entries(&[1, 3, 4]));
+        let items = registry.get_metadata_range(0, Some(1002), None, 3)?;
+        assert_eq!(items, index_entries(&[0, 4, 2]));
 
-        let items = registry.get_metadata_range(0, Some(1006), 3)?;
-        assert_eq!(items, index_entries(&[1, 3]));
+        {
+            let address = &entries[4].0;
+            let items = registry.get_metadata_range(999, None, Some(address), 10)?;
+            assert_eq!(items, index_entries(&[0, 4, 2, 5]));
+            let items = registry.get_metadata_range(1000, None, Some(address), 10)?;
+            assert_eq!(items, index_entries(&[4, 2, 5]));
+            let items = registry.get_metadata_range(1001, None, Some(address), 10)?;
+            assert_eq!(items, index_entries(&[2, 5]));
+        }
 
-        let items = registry.get_metadata_range(1004, Some(1006), 3)?;
-        assert_eq!(items, index_entries(&[3]));
+        let items = registry.get_metadata_range(1001, Some(1002), None, 3)?;
+        assert_eq!(items, index_entries(&[4, 2]));
 
         // Add stale timestamp for some pkh
         let cf_pkh_by_time = registry.db.cf(CF_PKH_BY_TIME)?;
@@ -864,8 +891,8 @@ mod tests {
         )?;
 
         // Stale entry gets ignored
-        let items = registry.get_metadata_range(0, None, 10)?;
-        assert_eq!(items, index_entries(&[1, 3, 4]));
+        let items = registry.get_metadata_range(0, None, None, 10)?;
+        assert_eq!(items, index_entries(&[0, 4, 2, 5]));
 
         Ok(())
     }

@@ -1,6 +1,6 @@
 //! Module containing [`RegistryServer`] to run the registry HTTP server.
 
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, str::FromStr, sync::Arc};
 
 use axum::{
     body::Body,
@@ -150,6 +150,7 @@ async fn handle_get_metadata_range(
     const START_TIMESTAMP: &str = "start_timestamp";
     const END_TIMESTAMP: &str = "end_timestamp";
     const NUM_ITEMS: &str = "num_items";
+    const LAST_ADDRESS: &str = "last_address";
     const MAX_NUM_ITEMS: usize = 100;
     let start_timestamp = match params.get(START_TIMESTAMP) {
         Some(start_timestamp) => {
@@ -188,10 +189,24 @@ async fn handle_get_metadata_range(
             .min(MAX_NUM_ITEMS),
         None => MAX_NUM_ITEMS,
     };
-    let metadata_range =
-        server
-            .registry
-            .get_metadata_range(start_timestamp, end_timestamp, num_items)?;
+    let last_address = match params.get(LAST_ADDRESS) {
+        Some(last_address) => {
+            Some(
+                LotusAddress::from_str(last_address).map_err(|err| InvalidQueryParam {
+                    param: LAST_ADDRESS,
+                    value: last_address.to_string(),
+                    msg: err.to_string(),
+                })?,
+            )
+        }
+        None => None,
+    };
+    let metadata_range = server.registry.get_metadata_range(
+        start_timestamp,
+        end_timestamp,
+        last_address.as_ref(),
+        num_items,
+    )?;
     Ok(Protobuf(proto::GetMetadataRangeResponse {
         entries: metadata_range
             .entries
