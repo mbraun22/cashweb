@@ -106,6 +106,20 @@ impl<'a> DbMetadata<'a> {
         iter.map(|(key, _)| TimePkh::from_storage_bytes(Vec::from(key).into()))
     }
 
+    /// Return the last public key hash, by time.
+    pub fn get_latest(&self) -> Result<Option<TimePkh>> {
+        let mut iter = self
+            .db
+            .rocksdb()
+            .iterator_cf(self.cf_pkh_by_time, rocksdb::IteratorMode::End);
+        let key = match iter.next() {
+            Some((key, _)) => key,
+            None => return Ok(None),
+        };
+        let time_pkh = TimePkh::from_storage_bytes(Vec::from(key).into())?;
+        Ok(Some(time_pkh))
+    }
+
     pub(crate) fn add_cfs(columns: &mut Vec<ColumnFamilyDescriptor>) {
         let options = rocksdb::Options::default();
         columns.push(ColumnFamilyDescriptor::new(CF_METADATA, options.clone()));
@@ -146,6 +160,7 @@ mod tests {
         assert_eq!(db.metadata().get(&pkh)?, None);
         // No by time entries yet
         assert_eq!(db.metadata().iter_by_time(0).count(), 0);
+        assert_eq!(db.metadata().get_latest()?, None);
 
         let mut address_metadata = proto::AddressMetadata {
             timestamp: 1234,
@@ -190,6 +205,13 @@ mod tests {
                 pkh: pkh.clone(),
             }],
         );
+        assert_eq!(
+            db.metadata().get_latest()?,
+            Some(TimePkh {
+                timestamp: 1234,
+                pkh: pkh.clone(),
+            }),
+        );
         assert_eq!(db.metadata().iter_by_time(1235).count(), 0);
 
         // Update entry
@@ -210,6 +232,13 @@ mod tests {
                 timestamp: 1235,
                 pkh: pkh.clone(),
             }],
+        );
+        assert_eq!(
+            db.metadata().get_latest()?,
+            Some(TimePkh {
+                timestamp: 1235,
+                pkh: pkh.clone(),
+            }),
         );
         assert_eq!(db.metadata().iter_by_time(1235).count(), 1);
         assert_eq!(db.metadata().iter_by_time(1236).count(), 0);
@@ -232,6 +261,13 @@ mod tests {
                 .iter_by_time(0)
                 .last()
                 .unwrap()
+                .unwrap_err()
+                .downcast::<PkhError>()?,
+            PkhError::InvalidTimePkhTimestamp,
+        );
+        assert_eq!(
+            db.metadata()
+                .get_latest()
                 .unwrap_err()
                 .downcast::<PkhError>()?,
             PkhError::InvalidTimePkhTimestamp,
