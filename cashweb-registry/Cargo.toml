@@ -9,6 +9,7 @@ bitcoinsuite-bitcoind = { path = "../../bitcoinsuite/bitcoinsuite-bitcoind" }
 bitcoinsuite-error = { path = "../../bitcoinsuite/bitcoinsuite-error" }
 bitcoinsuite-ecc-secp256k1 = { path = "../../bitcoinsuite/bitcoinsuite-ecc-secp256k1" }
 bitcoinsuite-test-utils = { path = "../../bitcoinsuite/bitcoinsuite-test-utils" }
+bitcoinsuite-test-utils-blockchain = { path = "../../bitcoinsuite/bitcoinsuite-test-utils-blockchain" }
 
 cashweb-http-utils = { path = "../cashweb-http-utils" }
 cashweb-payload = { path = "../cashweb-payload" }
@@ -52,7 +53,6 @@ prost-build = "0.11"
 
 [dev-dependencies]
 bitcoinsuite-ecc-secp256k1 = { path = "../../bitcoinsuite/bitcoinsuite-ecc-secp256k1" }
-bitcoinsuite-test-utils-blockchain = { path = "../../bitcoinsuite/bitcoinsuite-test-utils-blockchain" }
 
 # assert_eq! and assert_ne! with colored diffs
 pretty_assertions = "1.2"

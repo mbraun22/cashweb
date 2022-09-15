@@ -3,13 +3,20 @@
 use std::{net::SocketAddr, path::Path, sync::Arc, time::Duration};
 
 use bitcoinsuite_bitcoind::instance::{BitcoindConf, BitcoindInstance};
-use bitcoinsuite_core::Net;
+use bitcoinsuite_core::{
+    ecc::{Ecc, PubKey, SecKey},
+    BitcoinCode, Hashed, Net, OutPoint, Script, Sha256, TxOutput, UnhashedTx,
+};
 use bitcoinsuite_error::Result;
 use bitcoinsuite_test_utils::{is_free_tcp, pick_ports};
+use bitcoinsuite_test_utils_blockchain::build_tx;
+use cashweb_payload::{payload::SignatureScheme, verify::build_commitment_script};
+use prost::Message;
 
 use crate::{
     http::server::RegistryServer,
     p2p::{peer::Peer, peers::Peers},
+    proto,
     registry::Registry,
     store::db::Db,
 };
@@ -82,4 +89,44 @@ impl RegistryTestInstance {
     pub fn cleanup(&self) -> Result<()> {
         self.bitcoind.cleanup()
     }
+}
+
+/// Build a [`cashweb_payload::proto::SignedPayload`] for testing.
+pub fn build_signed_metadata(
+    seckey: &SecKey,
+    pubkey: PubKey,
+    ecc: &dyn Ecc,
+    utxos: &mut Vec<(OutPoint, i64)>,
+    redeem_script: &Script,
+    address_metadata: proto::AddressMetadata,
+) -> (cashweb_payload::proto::SignedPayload, UnhashedTx) {
+    let payload_hash = Sha256::digest(address_metadata.encode_to_vec().into());
+
+    // Build burn commitment tx
+    let (outpoint, amount) = utxos.pop().unwrap();
+    let burn_amount = amount - 10_000;
+    let tx = build_tx(
+        outpoint,
+        redeem_script,
+        vec![TxOutput {
+            value: burn_amount,
+            script: build_commitment_script(pubkey.array(), &payload_hash),
+        }],
+    );
+
+    // Sign address metadata
+    let signed_metadata = cashweb_payload::proto::SignedPayload {
+        pubkey: pubkey.array().to_vec(),
+        sig: ecc.sign(seckey, payload_hash.byte_array().clone()).to_vec(),
+        sig_scheme: SignatureScheme::Ecdsa.into(),
+        payload: address_metadata.encode_to_vec(),
+        payload_hash: payload_hash.as_slice().to_vec(),
+        burn_amount,
+        burn_txs: vec![cashweb_payload::proto::BurnTx {
+            tx: tx.ser().to_vec(),
+            burn_idx: 0,
+        }],
+    };
+
+    (signed_metadata, tx)
 }

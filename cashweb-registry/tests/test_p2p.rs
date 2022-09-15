@@ -2,16 +2,18 @@ use std::{ffi::OsString, time::Duration};
 
 use bitcoinsuite_bitcoind::instance::{BitcoindChain, BitcoindConf};
 use bitcoinsuite_core::{
-    ecc::Ecc, lotus_txid, BitcoinCode, Hashed, LotusAddress, Net, Network, Script, Sha256,
-    ShaRmd160, TxOutput,
+    ecc::Ecc, lotus_txid, Hashed, LotusAddress, Net, Network, Script, ShaRmd160,
 };
 use bitcoinsuite_ecc_secp256k1::EccSecp256k1;
 use bitcoinsuite_error::Result;
 use bitcoinsuite_test_utils::bin_folder;
-use bitcoinsuite_test_utils_blockchain::{build_tx, setup_bitcoind_coins};
+use bitcoinsuite_test_utils_blockchain::setup_bitcoind_coins;
 use cashweb_http_utils::protobuf::CONTENT_TYPE_PROTOBUF;
-use cashweb_payload::{payload::SignatureScheme, verify::build_commitment_script};
-use cashweb_registry::{p2p::peer::Peer, proto, test_instance::RegistryTestInstance};
+use cashweb_registry::{
+    p2p::peer::Peer,
+    proto,
+    test_instance::{build_signed_metadata, RegistryTestInstance},
+};
 use prost::Message;
 use reqwest::{
     header::{CONTENT_TYPE, ORIGIN},
@@ -93,40 +95,18 @@ async fn test_p2p() -> Result<()> {
     let address = LotusAddress::new("lotus", Net::Regtest, Script::p2pkh(&pkh));
 
     // Build valid address metadata
-    let address_metadata = proto::AddressMetadata {
-        timestamp: 1234,
-        ttl: 10,
-        entries: vec![],
-    };
-    let payload_hash = Sha256::digest(address_metadata.encode_to_vec().into());
-
-    // Build burn commitment tx
-    let (outpoint, amount) = utxos.pop().unwrap();
-    let burn_amount = amount - 10_000;
-    let tx = build_tx(
-        outpoint,
+    let (signed_metadata, tx) = build_signed_metadata(
+        &seckey,
+        pubkey,
+        &ecc,
+        &mut utxos,
         &anyone_script,
-        vec![TxOutput {
-            value: burn_amount,
-            script: build_commitment_script(pubkey.array(), &payload_hash),
-        }],
+        proto::AddressMetadata {
+            timestamp: 1234,
+            ttl: 10,
+            entries: vec![],
+        },
     );
-
-    // Sign address metadata
-    let signed_metadata = cashweb_payload::proto::SignedPayload {
-        pubkey: pubkey.array().to_vec(),
-        sig: ecc
-            .sign(&seckey, payload_hash.byte_array().clone())
-            .to_vec(),
-        sig_scheme: SignatureScheme::Ecdsa.into(),
-        payload: address_metadata.encode_to_vec(),
-        payload_hash: payload_hash.as_slice().to_vec(),
-        burn_amount,
-        burn_txs: vec![cashweb_payload::proto::BurnTx {
-            tx: tx.ser().to_vec(),
-            burn_idx: 0,
-        }],
-    };
 
     // Send request to last instance
     let client = reqwest::Client::new();
