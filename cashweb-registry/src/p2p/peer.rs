@@ -226,6 +226,11 @@ impl Peer {
         }
         true
     }
+
+    /// URL of the [`Peer`]
+    pub fn url(&self) -> &url::Url {
+        &self.url
+    }
 }
 
 impl PeerState {

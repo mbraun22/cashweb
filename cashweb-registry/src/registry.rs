@@ -325,6 +325,20 @@ impl Registry {
         }
         Ok(GetMetadataRangeResult { entries })
     }
+
+    pub(crate) fn get_latest_metadata(&self) -> Result<Option<(i64, LotusAddress)>> {
+        match self.db.metadata().get_latest()? {
+            Some(time_pkh) => {
+                let address = time_pkh.pkh.to_address(self.net);
+                Ok(Some((time_pkh.timestamp, address)))
+            }
+            None => Ok(None),
+        }
+    }
+
+    pub(crate) fn net(&self) -> Net {
+        self.net
+    }
 }
 
 #[cfg(test)]
