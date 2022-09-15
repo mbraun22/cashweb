@@ -10,7 +10,7 @@ use thiserror::Error;
 use crate::{
     proto,
     store::{
-        db::{Db, CF, CF_METADATA, CF_PKH_BY_TIME},
+        db::{Db, DbError, CF, CF_METADATA, CF_PKH_BY_TIME},
         pubkeyhash::{PubKeyHash, TimePkh},
     },
 };
@@ -103,7 +103,10 @@ impl<'a> DbMetadata<'a> {
             self.cf_pkh_by_time,
             rocksdb::IteratorMode::From(&start_timestamp, rocksdb::Direction::Forward),
         );
-        iter.map(|(key, _)| TimePkh::from_storage_bytes(Vec::from(key).into()))
+        iter.map(|result| {
+            let (key, _) = result.wrap_err(DbError::RocksDb)?;
+            TimePkh::from_storage_bytes(Vec::from(key).into())
+        })
     }
 
     /// Return the last public key hash, by time.
@@ -113,7 +116,10 @@ impl<'a> DbMetadata<'a> {
             .rocksdb()
             .iterator_cf(self.cf_pkh_by_time, rocksdb::IteratorMode::End);
         let key = match iter.next() {
-            Some((key, _)) => key,
+            Some(result) => {
+                let (key, _) = result.wrap_err(DbError::RocksDb)?;
+                key
+            }
             None => return Ok(None),
         };
         let time_pkh = TimePkh::from_storage_bytes(Vec::from(key).into())?;

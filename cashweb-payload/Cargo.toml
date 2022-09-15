@@ -11,14 +11,14 @@ bitcoinsuite-error = { path = "../../bitcoinsuite/bitcoinsuite-error" }
 hex = "0.4"
 
 # Protobuf (de)serialization
-prost = "0.10"
+prost = "0.11"
 
 # Derive error enums
 thiserror = "1.0"
 
 [build-dependencies]
 # Build Protobuf structs
-prost-build = "0.10"
+prost-build = "0.11"
 
 [dev-dependencies]
 bitcoinsuite-ecc-secp256k1 = { path = "../../bitcoinsuite/bitcoinsuite-ecc-secp256k1" }

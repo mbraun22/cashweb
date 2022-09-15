@@ -48,6 +48,9 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-flatbuffers-ninja-
 
+    - name: Install Protoc
+      uses: arduino/setup-protoc@v1
+
     - name: Install ninja
       uses: seanmiddleditch/gha-setup-ninja@master
       with:

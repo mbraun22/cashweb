@@ -26,13 +26,13 @@ futures = "0.3"
 json = "0.12"
 
 # Protobuf (de)serialization
-prost = "0.10"
+prost = "0.11"
 
 # Simple HTTP client
 reqwest = "0.11"
 
 # Fast embedded key-value database
-rocksdb = "0.18"
+rocksdb = "0.19"
 
 # Derive error enums
 thiserror = "1.0"
@@ -48,7 +48,7 @@ hex = "0.4"
 
 [build-dependencies]
 # Build Protobuf structs
-prost-build = "0.10"
+prost-build = "0.11"
 
 [dev-dependencies]
 bitcoinsuite-ecc-secp256k1 = { path = "../../bitcoinsuite/bitcoinsuite-ecc-secp256k1" }

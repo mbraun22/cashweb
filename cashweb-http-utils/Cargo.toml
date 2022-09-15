@@ -18,7 +18,7 @@ axum = { version = "0.5", features = ["ws"] }
 hyper = "0.14"
 
 # Protobuf (de)serialization
-prost = "0.10"
+prost = "0.11"
 
 # Async runtime
 tokio = { version = "1.17", features = ["full"] }
@@ -28,4 +28,4 @@ thiserror = "1.0"
 
 [build-dependencies]
 # Build Protobuf structs
-prost-build = "0.10"
+prost-build = "0.11"
