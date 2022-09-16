@@ -33,7 +33,7 @@ pub struct TimePkh {
 }
 
 /// Errors relating to `PubKeyHash`.
-#[derive(Debug, Error, ErrorMeta, Clone, PartialEq)]
+#[derive(Debug, Error, ErrorMeta, Clone, Eq, PartialEq)]
 pub enum PkhError {
     /// Invalid hash length given the algorithm.
     #[invalid_client_input()]

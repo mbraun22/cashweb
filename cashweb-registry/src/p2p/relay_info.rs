@@ -8,14 +8,14 @@ use reqwest::header::ORIGIN;
 use thiserror::Error;
 
 /// Data extracted from a request necessary for relaying.
-#[derive(Debug, Clone, PartialEq, Hash)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct RelayInfo {
     /// 'Origin' header of the incoming metadata PUT request.
     pub origin: url::Url,
 }
 
 /// Errors parsing RelayInfo.
-#[derive(Error, ErrorMeta, Clone, Debug, PartialEq)]
+#[derive(Error, ErrorMeta, Clone, Debug, Eq, PartialEq)]
 pub enum RelayInfoError {
     /// HTTP request is missing the 'Origin' header.
     #[invalid_client_input()]

@@ -67,7 +67,7 @@ enum BurnTxValidation {
 }
 
 /// Errors indicating some registry error.
-#[derive(Debug, Error, ErrorMeta, PartialEq)]
+#[derive(Debug, Error, ErrorMeta, Eq, PartialEq)]
 pub enum RegistryError {
     /// Hash of `pubkey` of [`SignedPayload`] doesn't match provided [`PubKeyHash`].
     #[invalid_client_input()]
