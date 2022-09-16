@@ -394,7 +394,15 @@ dependencies = [
 name = "cashwebd-exe"
 version = "0.1.0"
 dependencies = [
+ "axum",
+ "bitcoinsuite-bitcoind",
+ "bitcoinsuite-core",
+ "bitcoinsuite-error",
+ "cashweb-config",
  "cashweb-registry",
+ "rand 0.8.5",
+ "thiserror",
+ "tokio",
 ]
 
 [[package]]

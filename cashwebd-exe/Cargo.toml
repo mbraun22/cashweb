@@ -4,4 +4,20 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+bitcoinsuite-bitcoind = { path = "../../bitcoinsuite/bitcoinsuite-bitcoind" }
+bitcoinsuite-core = { path = "../../bitcoinsuite/bitcoinsuite-core" }
+bitcoinsuite-error = { path = "../../bitcoinsuite/bitcoinsuite-error" }
 cashweb-registry = { path = "../cashweb-registry" }
+cashweb-config = { path = "../cashweb-config" }
+
+# Web app framework
+axum = { version = "0.5", features = ["ws"] }
+
+# Random number generator
+rand = "0.8"
+
+# Derive error enums
+thiserror = "1.0"
+
+# Async runtime
+tokio = { version = "1.17", features = ["full"] }
