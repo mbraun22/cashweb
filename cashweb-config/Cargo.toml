@@ -1,0 +1,18 @@
+[package]
+name = "cashweb-config"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bitcoinsuite-bitcoind = { path = "../../bitcoinsuite/bitcoinsuite-bitcoind" }
+bitcoinsuite-core = { path = "../../bitcoinsuite/bitcoinsuite-core" }
+bitcoinsuite-error = { path = "../../bitcoinsuite/bitcoinsuite-error" }
+
+# De-/serialization
+serde = { version = "1.0", features = ["derive"] }
+
+# TOML configuration file format
+toml = "0.5"
+
+# Url parsing
+url = { version = "2.2", features = ["serde"] }
