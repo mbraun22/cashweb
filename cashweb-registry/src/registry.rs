@@ -367,7 +367,7 @@ mod tests {
     use bitcoinsuite_test_utils_blockchain::{build_tx, setup_bitcoind_coins};
     use cashweb_payload::{
         payload::{ParseSignedPayloadError, SignatureScheme, SignedPayload},
-        verify::{build_commitment_script, ValidateSignedPayloadError},
+        verify::{build_commitment_script, ValidateSignedPayloadError, ADDRESS_METADATA_LOKAD_ID},
     };
     use pretty_assertions::assert_eq;
     use prost::Message;
@@ -437,7 +437,11 @@ mod tests {
             inputs: vec![],
             outputs: vec![TxOutput {
                 value: 1_000_000,
-                script: build_commitment_script(pubkey.array(), &payload_hash),
+                script: build_commitment_script(
+                    ADDRESS_METADATA_LOKAD_ID,
+                    pubkey.array(),
+                    &payload_hash,
+                ),
             }],
             lock_time: 0,
         };
@@ -602,7 +606,11 @@ mod tests {
                     TxBuilderOutput::Leftover(address.script().clone()),
                     TxBuilderOutput::Fixed(TxOutput {
                         value: burn_amount,
-                        script: build_commitment_script(pubkey.array(), &payload_hash),
+                        script: build_commitment_script(
+                            ADDRESS_METADATA_LOKAD_ID,
+                            pubkey.array(),
+                            &payload_hash,
+                        ),
                     }),
                 ],
                 lock_time: 0,
@@ -843,7 +851,11 @@ mod tests {
                 &anyone_script,
                 vec![TxOutput {
                     value: burn_amount,
-                    script: build_commitment_script(pubkey.array(), &payload_hash),
+                    script: build_commitment_script(
+                        ADDRESS_METADATA_LOKAD_ID,
+                        pubkey.array(),
+                        &payload_hash,
+                    ),
                 }],
             );
 

@@ -10,7 +10,10 @@ use bitcoinsuite_core::{
 use bitcoinsuite_error::Result;
 use bitcoinsuite_test_utils::{is_free_tcp, pick_ports};
 use bitcoinsuite_test_utils_blockchain::build_tx;
-use cashweb_payload::{payload::SignatureScheme, verify::build_commitment_script};
+use cashweb_payload::{
+    payload::SignatureScheme,
+    verify::{build_commitment_script, ADDRESS_METADATA_LOKAD_ID},
+};
 use prost::Message;
 
 use crate::{
@@ -110,7 +113,11 @@ pub fn build_signed_metadata(
         redeem_script,
         vec![TxOutput {
             value: burn_amount,
-            script: build_commitment_script(pubkey.array(), &payload_hash),
+            script: build_commitment_script(
+                ADDRESS_METADATA_LOKAD_ID,
+                pubkey.array(),
+                &payload_hash,
+            ),
         }],
     );
 

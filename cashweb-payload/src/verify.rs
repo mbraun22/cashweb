@@ -10,7 +10,7 @@ use thiserror::Error;
 use crate::payload::{SignatureScheme, SignedPayload};
 
 /// LOKAD ID of commitment burns.
-pub const COMMITMENT_LOKAD_ID: [u8; 4] = *b"STMP";
+pub const ADDRESS_METADATA_LOKAD_ID: [u8; 4] = *b"STMP";
 /// Opcode that indicates the version of the commitment.
 pub const COMMITMENT_VERSION_OPCODE: u8 = 0x51;
 /// Required length of the commitment.
@@ -38,7 +38,7 @@ pub enum ValidateSignedPayloadError {
     #[invalid_client_input()]
     #[error(
         "Burn tx output script expected LOKAD ID {:?} but got op {0:?}",
-        Bytes::from(COMMITMENT_LOKAD_ID)
+        Bytes::from(ADDRESS_METADATA_LOKAD_ID)
     )]
     BurnOutputInvalidLokadId(Op),
 
@@ -97,7 +97,8 @@ impl<T> SignedPayload<T> {
         // Verify OP_RETURN commitments
         let expected_commitment = calc_commitment(self.pubkey, &self.payload_hash);
         for (idx, burn_tx) in self.burn_txs.iter().enumerate() {
-            let parsed_commitment = parse_commitment(&burn_tx.burn_output.script)?;
+            let parsed_commitment =
+                parse_commitment(ADDRESS_METADATA_LOKAD_ID, &burn_tx.burn_output.script)?;
             if expected_commitment != parsed_commitment {
                 return Err(BurnOutputCommitmentMismatch {
                     expected: expected_commitment,
@@ -127,12 +128,16 @@ impl<T> SignedPayload<T> {
 }
 
 /// Build the burn [`bitcoinsuite_core::Script`] for the given pubkey and payload hash.
-pub fn build_commitment_script(pubkey_raw: [u8; PUBKEY_LENGTH], payload_hash: &Sha256) -> Script {
+pub fn build_commitment_script(
+    commitment_id: [u8; 4],
+    pubkey_raw: [u8; PUBKEY_LENGTH],
+    payload_hash: &Sha256,
+) -> Script {
     let commitment = calc_commitment(pubkey_raw, payload_hash);
     Script::from_ops(
         vec![
             Op::Code(0x6a),
-            Op::Push(4, COMMITMENT_LOKAD_ID.into()),
+            Op::Push(4, commitment_id.into()),
             Op::Code(COMMITMENT_VERSION_OPCODE),
             Op::Push(COMMITMENT_LEN, commitment.as_slice().into()),
         ]
@@ -141,7 +146,7 @@ pub fn build_commitment_script(pubkey_raw: [u8; PUBKEY_LENGTH], payload_hash: &S
     .unwrap()
 }
 
-fn parse_commitment(script: &Script) -> Result<Sha256> {
+fn parse_commitment(commitment_id: [u8; 4], script: &Script) -> Result<Sha256> {
     // Must be OP_RETURN
     if !script.is_opreturn() {
         return Err(BurnOutputNotOpReturn(script.hex()).into());
@@ -158,7 +163,7 @@ fn parse_commitment(script: &Script) -> Result<Sha256> {
     }
 
     // Check LOKAD ID
-    if script_ops[1] != Op::Push(4, COMMITMENT_LOKAD_ID.into()) {
+    if script_ops[1] != Op::Push(4, commitment_id.into()) {
         return Err(BurnOutputInvalidLokadId(script_ops[1].clone()).into());
     }
 

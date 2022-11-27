@@ -11,7 +11,10 @@ use bitcoinsuite_error::Result;
 use bitcoinsuite_test_utils::bin_folder;
 use bitcoinsuite_test_utils_blockchain::setup_bitcoind_coins;
 use cashweb_http_utils::protobuf::CONTENT_TYPE_PROTOBUF;
-use cashweb_payload::{payload::SignatureScheme, verify::build_commitment_script};
+use cashweb_payload::{
+    payload::SignatureScheme,
+    verify::{build_commitment_script, ADDRESS_METADATA_LOKAD_ID},
+};
 use cashweb_registry::{proto, test_instance::RegistryTestInstance};
 use pretty_assertions::assert_eq;
 use prost::Message;
@@ -157,7 +160,11 @@ async fn test_registry_http() -> Result<()> {
             TxBuilderOutput::Leftover(address.script().clone()),
             TxBuilderOutput::Fixed(TxOutput {
                 value: burn_amount,
-                script: build_commitment_script(pubkey.array(), &payload_hash),
+                script: build_commitment_script(
+                    ADDRESS_METADATA_LOKAD_ID,
+                    pubkey.array(),
+                    &payload_hash,
+                ),
             }),
         ],
         lock_time: 0,
