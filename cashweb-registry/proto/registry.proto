@@ -40,7 +40,7 @@ message Peers {
 }
 
 // Response after putting address metadata to the registry.
-message PutAddressMetadataResponse {
+message PutSignedPayloadResponse {
     // Transaction IDs of the burn txs.
     repeated bytes txid = 1;
 }

@@ -114,7 +114,7 @@ async fn handle_put_registry(
     Protobuf(signed_metadata): Protobuf<cashweb_payload::proto::SignedPayload>,
     Extension(server): Extension<RegistryServer>,
     header_map: HeaderMap,
-) -> Result<Protobuf<proto::PutAddressMetadataResponse>, HttpRegistryError> {
+) -> Result<Protobuf<proto::PutSignedPayloadResponse>, HttpRegistryError> {
     let address = address.parse::<LotusAddress>().map_err(InvalidAddress)?;
     let request = PutMetadataRequest {
         address,
@@ -122,7 +122,7 @@ async fn handle_put_registry(
         signed_metadata,
     };
     let result = server.put_metadata(request).await?;
-    Ok(Protobuf(proto::PutAddressMetadataResponse {
+    Ok(Protobuf(proto::PutSignedPayloadResponse {
         txid: result
             .txids
             .into_iter()

@@ -121,10 +121,10 @@ async fn test_p2p() -> Result<()> {
     // Check request accepted
     assert_eq!(response.status(), StatusCode::OK);
     let mut body = response.bytes().await?;
-    let broadcast_response = proto::PutAddressMetadataResponse::decode(&mut body)?;
+    let broadcast_response = proto::PutSignedPayloadResponse::decode(&mut body)?;
     assert_eq!(
         broadcast_response,
-        proto::PutAddressMetadataResponse {
+        proto::PutSignedPayloadResponse {
             txid: vec![lotus_txid(&tx).as_slice().to_vec()],
         },
     );
