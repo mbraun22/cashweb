@@ -32,7 +32,7 @@ pub struct PutMetadataResult {
     /// Transaction IDs of the burn txs for this payload.
     pub txids: Vec<Sha256d>,
     /// Which action happened with the blockchain.
-    pub blockchain_action: PutMetadataBlockchainAction,
+    pub blockchain_action: PutBlockchainAction,
     /// Parsed signed payload.
     pub signed_metadata: SignedPayload<proto::AddressMetadata>,
 }
@@ -46,7 +46,7 @@ pub struct GetMetadataRangeResult {
 
 /// Which action happened with the blockchain when putting address metadata.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum PutMetadataBlockchainAction {
+pub enum PutBlockchainAction {
     /// Signed payload hash was already the current one in the database.
     /// Burn transactions were not validated.
     AlreadyKnowPayloadHash,
@@ -179,7 +179,7 @@ impl Registry {
                         .iter()
                         .map(|tx| lotus_txid(tx.tx().unhashed_tx()))
                         .collect(),
-                    blockchain_action: PutMetadataBlockchainAction::AlreadyKnowPayloadHash,
+                    blockchain_action: PutBlockchainAction::AlreadyKnowPayloadHash,
                     signed_metadata,
                 });
             }
@@ -193,20 +193,35 @@ impl Registry {
             }
         }
 
+        let (txids, blockchain_action) = self.validate_burn_txs(signed_metadata.txs()).await?;
+
+        // Write new metadata into the database
+        self.db.metadata().put(&pkh, &signed_metadata)?;
+        Ok(PutMetadataResult {
+            txids,
+            blockchain_action,
+            signed_metadata,
+        })
+    }
+
+    async fn validate_burn_txs(
+        &self,
+        burn_txs: &[BurnTx],
+    ) -> Result<(Vec<Sha256d>, PutBlockchainAction)> {
         // Verify txs are valid on the network
-        let mut validations = Vec::with_capacity(signed_metadata.txs().len());
-        for burn_tx in signed_metadata.txs() {
+        let mut validations = Vec::with_capacity(burn_txs.len());
+        for burn_tx in burn_txs {
             validations.push(self.validate_burn_tx(burn_tx).await?);
         }
 
         // Broadcast txs onto the network
-        let mut txids = Vec::with_capacity(signed_metadata.txs().len());
-        let mut blockchain_action = PutMetadataBlockchainAction::Broadcast;
-        for (burn_tx, validation) in signed_metadata.txs().iter().zip(validations) {
+        let mut txids = Vec::with_capacity(burn_txs.len());
+        let mut blockchain_action = PutBlockchainAction::Broadcast;
+        for (burn_tx, validation) in burn_txs.iter().zip(validations) {
             if validation == BurnTxValidation::Known {
                 txids.push(lotus_txid(burn_tx.tx().unhashed_tx()));
-                if blockchain_action == PutMetadataBlockchainAction::Broadcast {
-                    blockchain_action = PutMetadataBlockchainAction::AlreadyKnowTx;
+                if blockchain_action == PutBlockchainAction::Broadcast {
+                    blockchain_action = PutBlockchainAction::AlreadyKnowTx;
                 }
                 continue;
             }
@@ -225,7 +240,7 @@ impl Registry {
                     match err {
                         BitcoindError::JsonRpcCode { code: -27, .. } => {
                             txids.push(lotus_txid(burn_tx.tx().unhashed_tx()));
-                            blockchain_action = PutMetadataBlockchainAction::BroadcastRaceCondition;
+                            blockchain_action = PutBlockchainAction::BroadcastRaceCondition;
                         }
                         err => return Err(err.into()),
                     }
@@ -233,13 +248,7 @@ impl Registry {
             }
         }
 
-        // Write new metadata into the database
-        self.db.metadata().put(&pkh, &signed_metadata)?;
-        Ok(PutMetadataResult {
-            txids,
-            blockchain_action,
-            signed_metadata,
-        })
+        Ok((txids, blockchain_action))
     }
 
     async fn validate_burn_tx(&self, burn_tx: &BurnTx) -> Result<BurnTxValidation> {
@@ -366,8 +375,7 @@ mod tests {
     use crate::{
         proto,
         registry::{
-            GetMetadataRangeResult, PutMetadataBlockchainAction, PutMetadataResult, Registry,
-            RegistryError,
+            GetMetadataRangeResult, PutBlockchainAction, PutMetadataResult, Registry, RegistryError,
         },
         store::{
             db::{Db, CF_PKH_BY_TIME},
@@ -536,7 +544,7 @@ mod tests {
             result,
             PutMetadataResult {
                 txids: vec![lotus_txid(&tx)],
-                blockchain_action: PutMetadataBlockchainAction::Broadcast,
+                blockchain_action: PutBlockchainAction::Broadcast,
                 signed_metadata: SignedPayload::parse_proto(&signed_metadata)?,
             }
         );
@@ -553,7 +561,7 @@ mod tests {
             result,
             PutMetadataResult {
                 txids: vec![lotus_txid(&tx)],
-                blockchain_action: PutMetadataBlockchainAction::AlreadyKnowPayloadHash,
+                blockchain_action: PutBlockchainAction::AlreadyKnowPayloadHash,
                 signed_metadata: SignedPayload::parse_proto(&signed_metadata)?,
             }
         );
@@ -639,7 +647,7 @@ mod tests {
             result,
             PutMetadataResult {
                 txids: vec![lotus_txid(&tx)],
-                blockchain_action: PutMetadataBlockchainAction::Broadcast,
+                blockchain_action: PutBlockchainAction::Broadcast,
                 signed_metadata: SignedPayload::parse_proto(&signed_metadata)?,
             }
         );
@@ -667,7 +675,7 @@ mod tests {
             result,
             PutMetadataResult {
                 txids: vec![lotus_txid(&tx)],
-                blockchain_action: PutMetadataBlockchainAction::AlreadyKnowTx,
+                blockchain_action: PutBlockchainAction::AlreadyKnowTx,
                 signed_metadata: SignedPayload::parse_proto(&signed_metadata)?,
             }
         );
@@ -741,9 +749,7 @@ mod tests {
                 });
                 let result = registry.put_metadata(&address, &signed_metadata).await;
                 if let Ok(result) = result {
-                    if result.blockchain_action
-                        == PutMetadataBlockchainAction::BroadcastRaceCondition
-                    {
+                    if result.blockchain_action == PutBlockchainAction::BroadcastRaceCondition {
                         found_any_race_condition = true;
                         break;
                     }
