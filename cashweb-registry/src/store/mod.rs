@@ -4,3 +4,4 @@
 pub mod db;
 pub mod metadata;
 pub mod pubkeyhash;
+pub mod topics;

@@ -7,11 +7,14 @@ use rocksdb::ColumnFamilyDescriptor;
 use thiserror::Error;
 
 use crate::store::metadata::DbMetadata;
+use crate::store::topics::DbTopics;
 
 // We collect the column family constants here so we have a nice overview.
 // This makes it easier to keep cf names consistent and non-conflicting.
 pub(crate) const CF_METADATA: &str = "metadata";
 pub(crate) const CF_PKH_BY_TIME: &str = "pkh_by_time";
+pub(crate) const CF_MESSAGES: &str = "topic_messages";
+pub(crate) const CF_PAYLOADS: &str = "message_payloads";
 
 pub(crate) type CF = rocksdb::ColumnFamily;
 
@@ -43,12 +46,18 @@ impl Db {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let mut cfs = Vec::new();
         DbMetadata::add_cfs(&mut cfs);
+        DbTopics::add_cfs(&mut cfs);
         Self::open_with_cfs(path, cfs)
     }
 
     /// Returns `DbMetadata`, allowing access to registry metadata.
     pub fn metadata(&self) -> DbMetadata<'_> {
         DbMetadata::new(self)
+    }
+
+    /// Returns `DbTopics`, allowing access to registry metadata.
+    pub fn topics(&self) -> DbTopics<'_> {
+        DbTopics::new(self)
     }
 
     pub(crate) fn open_with_cfs(

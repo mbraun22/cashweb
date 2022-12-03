@@ -1,0 +1,25 @@
+syntax = "proto3";
+package cashweb.registry;
+import "payload.proto";
+
+// Entry in a broadcast message
+message BroadcastEntry {
+  // Kind of entry, used by clients to understand how to parse the payload
+  string kind = 1;
+  // Various headers which may be relevant to clients indicating treatment of
+  // the entry
+  map<string, string> headers = 2;
+  // Raw payload bytes which clients must parse
+  bytes payload = 3;
+}
+
+// Broad message that is sent to a particular topic which can have multiple
+// entries
+message BroadcastMessage {
+  // Topic this broadcast message should be recorded for
+  string topic = 1;
+  // Timestamp the message was created
+  int64 timestamp = 2;
+  // List of entries in the broadcast message
+  repeated BroadcastEntry entries = 3;
+}
