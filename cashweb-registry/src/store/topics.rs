@@ -5,7 +5,7 @@ use crate::{
     store::db::{Db, CF, CF_MESSAGES, CF_PAYLOADS},
 };
 use bitcoinsuite_core::{Hashed, Sha256};
-use bitcoinsuite_error::{ErrorMeta, Result};
+use bitcoinsuite_error::{ErrorMeta, Result, WrapErr};
 use cashweb_payload::payload::SignedPayload;
 use prost::Message;
 use rocksdb::{ColumnFamilyDescriptor, Direction, IteratorMode};
@@ -22,28 +22,39 @@ pub struct DbTopics<'a> {
 }
 
 /// Errors indicating some registry topic error.
-#[derive(Debug, Error, ErrorMeta)]
+#[derive(Debug, Error, ErrorMeta, PartialEq, Eq)]
 pub enum DbTopicsError {
-    /// Foo
+    /// Value not found in message
     #[critical()]
     #[error("Value not found in messages: {0}")]
     MissingValue(String),
 
-    /// Foo
+    /// Topic has too many separators
     #[critical()]
     #[error("Topic has too many separators: {0} > 10")]
     TopicTooLong(usize),
 
-    /// Foo
+    /// Topic contains invalid characters
     #[critical()]
     #[error("Topic contains invalid characters")]
     TopicInvalidCharacters(),
 
-    /// Foo
+    /// Topic contains empty segments
     #[critical()]
     #[error("Topic contains empty segments")]
     TopicInvalidSegments(),
+
+    /// Database contains an invalid protobuf MetadataEntry.
+    #[critical()]
+    #[error("Inconsistent db: Invalid SignedPayload in DB")]
+    InvalidSignedPayloadInDb,
+
+    /// Attempting to write message with no payload
+    #[critical()]
+    #[error("Attempting to write message with no payload")]
+    MissingPayload(),
 }
+use self::DbTopicsError::*;
 
 /// Allows access to registry topics.
 impl<'a> DbTopics<'a> {
@@ -61,15 +72,15 @@ impl<'a> DbTopics<'a> {
     /// Put a serialized `Message` to database.
     pub fn put_message(&self, timestamp: u64, message: &TopicPayload) -> Result<()> {
         let buf = message.to_proto().encode_to_vec();
-
-        let topic = message.payload().topic.clone();
+        let payload = message.payload();
+        let topic = payload.topic.clone();
 
         let split_topic = topic.split('.').collect::<Vec<_>>();
         if split_topic.len() > 10 {
-            return Err(DbTopicsError::TopicTooLong(split_topic.len()))?;
+            return Err(TopicTooLong(split_topic.len()))?;
         }
         if split_topic.iter().any(|segment| segment.is_empty()) {
-            return Err(DbTopicsError::TopicInvalidSegments())?;
+            return Err(TopicInvalidSegments())?;
         }
 
         let payload_hash = message.payload_hash().as_slice().to_vec();
@@ -114,7 +125,7 @@ impl<'a> DbTopics<'a> {
             .chars()
             .all(|c| c.is_lowercase() || c.is_numeric() || c == '.' || c == '-');
         if !valid_topic {
-            return Err(DbTopicsError::TopicInvalidCharacters())?;
+            return Err(TopicInvalidCharacters())?;
         }
 
         let topic_digest = Sha256::digest(topic.as_bytes().into()).as_slice().to_vec();
@@ -153,10 +164,10 @@ impl<'a> DbTopics<'a> {
             .db
             .rocksdb()
             .get_cf(self.cf_payloads, payload_digest)?
-            .ok_or_else(|| DbTopicsError::MissingValue(hex::encode(payload_digest)))?;
+            .ok_or_else(|| MissingValue(hex::encode(payload_digest)))?;
 
         let proto = cashweb_payload::proto::SignedPayload::decode(wrapper_bytes.as_slice())?;
-        Ok(TopicPayload::parse_proto(&proto)?)
+        Ok(TopicPayload::parse_proto(&proto).wrap_err(InvalidSignedPayloadInDb)?)
     }
 
     pub(crate) fn add_cfs(columns: &mut Vec<ColumnFamilyDescriptor>) {
