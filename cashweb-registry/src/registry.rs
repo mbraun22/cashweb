@@ -4,7 +4,10 @@ use bitcoinsuite_bitcoind::{rpc_client::BitcoindRpcClient, BitcoindError};
 use bitcoinsuite_core::{lotus_txid, Hashed, LotusAddress, Net, Sha256d};
 use bitcoinsuite_ecc_secp256k1::EccSecp256k1;
 use bitcoinsuite_error::{ErrorMeta, Result};
-use cashweb_payload::payload::{BurnTx, SignedPayload};
+use cashweb_payload::{
+    payload::{BurnTx, SignedPayload},
+    verify::ADDRESS_METADATA_LOKAD_ID,
+};
 use thiserror::Error;
 
 use crate::{
@@ -167,7 +170,7 @@ impl Registry {
         }
 
         // Verify burn amount and signatures check out
-        signed_metadata.verify(&self.ecc)?;
+        signed_metadata.verify(&self.ecc, ADDRESS_METADATA_LOKAD_ID)?;
 
         if let Some(existing_metadata) = self.get_metadata_pkh(&pkh)? {
             // If existing payload hash is the same as the new payload hash,

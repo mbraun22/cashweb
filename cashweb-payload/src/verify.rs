@@ -9,8 +9,9 @@ use thiserror::Error;
 
 use crate::payload::{SignatureScheme, SignedPayload};
 
-/// LOKAD ID of commitment burns.
+/// LOKAD ID of commitment burns for address metadata
 pub const ADDRESS_METADATA_LOKAD_ID: [u8; 4] = *b"STMP";
+
 /// Opcode that indicates the version of the commitment.
 pub const COMMITMENT_VERSION_OPCODE: u8 = 0x51;
 /// Required length of the commitment.
@@ -93,12 +94,11 @@ impl<T> SignedPayload<T> {
     ///
     /// Burn output script must look like this:
     /// `OP_RETURN <lokad_id: STMP> <version: 1> <commitment: 32 bytes>`
-    pub fn verify(&self, ecc: &impl Ecc) -> Result<()> {
+    pub fn verify(&self, ecc: &impl Ecc, commitment_id: [u8; 4]) -> Result<()> {
         // Verify OP_RETURN commitments
         let expected_commitment = calc_commitment(self.pubkey, &self.payload_hash);
         for (idx, burn_tx) in self.burn_txs.iter().enumerate() {
-            let parsed_commitment =
-                parse_commitment(ADDRESS_METADATA_LOKAD_ID, &burn_tx.burn_output.script)?;
+            let parsed_commitment = parse_commitment(commitment_id, &burn_tx.burn_output.script)?;
             if expected_commitment != parsed_commitment {
                 return Err(BurnOutputCommitmentMismatch {
                     expected: expected_commitment,
@@ -204,6 +204,7 @@ mod tests {
         verify::{
             calc_commitment,
             ValidateSignedPayloadError::{self, *},
+            ADDRESS_METADATA_LOKAD_ID,
         },
     };
 
@@ -211,7 +212,10 @@ mod tests {
     fn test_verify_signed_payload() -> Result<()> {
         let ecc = EccSecp256k1::default();
         let verify_err = |payload: &SignedPayload<()>| -> Result<ValidateSignedPayloadError> {
-            payload.verify(&ecc).unwrap_err().downcast()
+            payload
+                .verify(&ecc, ADDRESS_METADATA_LOKAD_ID)
+                .unwrap_err()
+                .downcast()
         };
         let payload_raw = Bytes::from([1, 2, 3, 4]);
         let payload_hash = Sha256::digest(payload_raw.clone());
@@ -457,12 +461,12 @@ mod tests {
         // Correct sig: Schnorr
         signed_payload.sig_scheme = SignatureScheme::Schnorr;
         signed_payload.sig = schnorr_sig;
-        signed_payload.verify(&ecc)?;
+        signed_payload.verify(&ecc, ADDRESS_METADATA_LOKAD_ID)?;
 
         // Correct sig: ECDSA
         signed_payload.sig_scheme = SignatureScheme::Ecdsa;
         signed_payload.sig = ecdsa_sig;
-        signed_payload.verify(&ecc)?;
+        signed_payload.verify(&ecc, ADDRESS_METADATA_LOKAD_ID)?;
 
         Ok(())
     }
