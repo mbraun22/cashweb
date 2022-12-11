@@ -72,7 +72,7 @@ impl<'a> DbTopics<'a> {
     /// Put a serialized `Message` to database.
     pub fn put_message(&self, timestamp: u64, message: &TopicPayload) -> Result<()> {
         let buf = message.to_proto().encode_to_vec();
-        let payload = message.payload();
+        let payload = message.payload().as_ref().ok_or(MissingPayload())?;
         let topic = payload.topic.clone();
 
         let split_topic = topic.split('.').collect::<Vec<_>>();

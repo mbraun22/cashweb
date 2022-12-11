@@ -240,11 +240,11 @@ mod tests {
         )?;
 
         let mut signed_payload = SignedPayload {
-            payload: (),
+            payload: None,
             pubkey,
             sig: Bytes::new(),
             sig_scheme: SignatureScheme::Schnorr,
-            payload_raw,
+            payload_raw: Some(payload_raw),
             payload_hash: payload_hash.clone(),
             burn_amount: 0,
             burn_txs: vec![],

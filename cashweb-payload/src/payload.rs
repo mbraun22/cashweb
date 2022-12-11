@@ -15,11 +15,11 @@ pub use crate::proto::signed_payload::SignatureScheme;
 /// providing a standard structure for covering a payload with a signature.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SignedPayload<T> {
-    pub(crate) payload: T,
+    pub(crate) payload: Option<T>,
     pub(crate) pubkey: [u8; PUBKEY_LENGTH],
     pub(crate) sig: Bytes,
     pub(crate) sig_scheme: SignatureScheme,
-    pub(crate) payload_raw: Bytes,
+    pub(crate) payload_raw: Option<Bytes>,
     pub(crate) payload_hash: Sha256,
     pub(crate) burn_amount: i64,
     pub(crate) burn_txs: Vec<BurnTx>,
@@ -107,34 +107,39 @@ impl<T: prost::Message + Default> SignedPayload<T> {
             .as_slice()
             .try_into()
             .map_err(|_| InvalidPubKeyLen(signed_payload.pubkey.len()))?;
-        let payload_raw = Bytes::from(signed_payload.payload.as_slice());
-        let expected_payload_hash = Sha256::digest(payload_raw.clone());
+        let payload_raw = if signed_payload.payload.len() > 0 {
+            Some(Bytes::from(signed_payload.payload.as_slice()))
+        } else {
+            None
+        };
+        let expected_payload_hash = payload_raw
+            .as_ref()
+            .map(|raw_bytes| Sha256::digest(raw_bytes.clone()));
 
         // Assign or check the payload_hash
         let payload_hash = match signed_payload.payload_hash.len() {
             // If it's unset, set it to the expected hash
-            0 => {
-                if payload_raw.is_empty() {
-                    return Err(PayloadHashAndPayloadEmpty.into());
-                }
-                expected_payload_hash
-            }
+            0 => expected_payload_hash.ok_or(PayloadHashAndPayloadEmpty)?,
             // If it's set, verify length and compare
             _ => {
-                let actual_payload_hash = Sha256::from_slice(&signed_payload.payload_hash)
-                    .wrap_err(InvalidPayloadHashLen(signed_payload.payload_hash.len()))?;
-                if expected_payload_hash != actual_payload_hash {
-                    return Err(IncorrectPayloadHash {
-                        expected: expected_payload_hash,
-                        actual: actual_payload_hash,
+                if let Some(expected_payload_hash) = expected_payload_hash {
+                    let actual_payload_hash = Sha256::from_slice(&signed_payload.payload_hash)
+                        .wrap_err(InvalidPayloadHashLen(signed_payload.payload_hash.len()))?;
+
+                    if expected_payload_hash != actual_payload_hash {
+                        return Err(IncorrectPayloadHash {
+                            expected: expected_payload_hash,
+                            actual: actual_payload_hash,
+                        })?;
                     }
-                    .into());
+
+                    actual_payload_hash
+                } else {
+                    Sha256::from_slice(&signed_payload.payload_hash)
+                        .wrap_err(InvalidPayloadHashLen(signed_payload.payload_hash.len()))?
                 }
-                expected_payload_hash
             }
         };
-
-        let payload = T::decode(&mut payload_raw.as_ref()).map_err(ParsingPayloadFailed)?;
 
         // Parse `BurnTx`s
         let burn_txs = signed_payload
@@ -171,6 +176,12 @@ impl<T: prost::Message + Default> SignedPayload<T> {
             .into());
         }
 
+        let payload = payload_raw
+            .as_ref()
+            .map(|payload_bytes| T::decode(&mut payload_bytes.as_ref()))
+            .transpose()
+            .map_err(ParsingPayloadFailed)?;
+
         Ok(SignedPayload {
             payload,
             pubkey,
@@ -190,7 +201,27 @@ impl<T: prost::Message + Default> SignedPayload<T> {
             pubkey: self.pubkey.to_vec(),
             sig: self.sig.to_vec(),
             sig_scheme: self.sig_scheme.into(),
-            payload: self.payload_raw.to_vec(),
+            payload: self.payload_raw.as_ref().map_or(vec![], |raw| raw.to_vec()),
+            payload_hash: self.payload_hash.as_slice().to_vec(),
+            burn_amount: self.burn_amount,
+            burn_txs: self
+                .burn_txs
+                .iter()
+                .map(|burn_tx| proto::BurnTx {
+                    tx: burn_tx.tx.ser().to_vec(),
+                    burn_idx: burn_tx.burn_idx,
+                })
+                .collect(),
+        }
+    }
+
+    /// Converts the [`SignedPayload`] to a Protobuf [`proto::SignedPayload`] omitting the actual payload.
+    pub fn to_proto_without_payload(&self) -> proto::SignedPayload {
+        proto::SignedPayload {
+            pubkey: self.pubkey.to_vec(),
+            sig: self.sig.to_vec(),
+            sig_scheme: self.sig_scheme.into(),
+            payload: vec![],
             payload_hash: self.payload_hash.as_slice().to_vec(),
             burn_amount: self.burn_amount,
             burn_txs: self
@@ -220,12 +251,12 @@ impl<T: prost::Message + Default> SignedPayload<T> {
     }
 
     /// Raw payload bytes that are being signed.
-    pub fn payload_raw(&self) -> &Bytes {
+    pub fn payload_raw(&self) -> &Option<Bytes> {
         &self.payload_raw
     }
 
     /// Decoded payload that's being signed.
-    pub fn payload(&self) -> &T {
+    pub fn payload(&self) -> &Option<T> {
         &self.payload
     }
 
@@ -326,11 +357,11 @@ mod tests {
         assert_eq!(
             SignedPayload::parse_proto(&signed_payload)?,
             SignedPayload {
-                payload: payload.clone(),
+                payload: Some(payload.clone()),
                 pubkey,
                 sig: Bytes::new(),
                 sig_scheme: SignatureScheme::Schnorr,
-                payload_raw: payload_raw.clone(),
+                payload_raw: Some(payload_raw.clone()),
                 payload_hash: payload_hash.clone(),
                 burn_amount: 0,
                 burn_txs: vec![],
@@ -361,11 +392,11 @@ mod tests {
             assert_eq!(
                 result,
                 SignedPayload {
-                    payload: payload.clone(),
+                    payload: Some(payload.clone()),
                     pubkey,
                     sig: Bytes::new(),
                     sig_scheme: SignatureScheme::Schnorr,
-                    payload_raw: payload_raw.clone(),
+                    payload_raw: Some(payload_raw.clone()),
                     payload_hash: payload_hash.clone(),
                     burn_amount: 0,
                     burn_txs: vec![],
@@ -409,11 +440,11 @@ mod tests {
         assert_eq!(
             SignedPayload::parse_proto(&signed_payload)?,
             SignedPayload {
-                payload: payload.clone(),
+                payload: Some(payload.clone()),
                 pubkey,
                 sig: Bytes::new(),
                 sig_scheme: SignatureScheme::Schnorr,
-                payload_raw: payload_raw.clone(),
+                payload_raw: Some(payload_raw.clone()),
                 payload_hash: payload_hash.clone(),
                 burn_amount: 1_000_000,
                 burn_txs: vec![BurnTx {
@@ -439,11 +470,11 @@ mod tests {
         assert_eq!(
             SignedPayload::parse_proto(&signed_payload)?,
             SignedPayload {
-                payload: payload.clone(),
+                payload: Some(payload.clone()),
                 pubkey,
                 sig: Bytes::new(),
                 sig_scheme: SignatureScheme::Schnorr,
-                payload_raw: payload_raw.clone(),
+                payload_raw: Some(payload_raw.clone()),
                 payload_hash: payload_hash.clone(),
                 burn_amount: 1_000_000,
                 burn_txs: vec![BurnTx {
@@ -488,11 +519,11 @@ mod tests {
             assert_eq!(
                 result,
                 SignedPayload {
-                    payload,
+                    payload: Some(payload),
                     pubkey,
                     sig: Bytes::new(),
                     sig_scheme: SignatureScheme::Schnorr,
-                    payload_raw,
+                    payload_raw: Some(payload_raw),
                     payload_hash,
                     burn_amount: 1_234_567,
                     burn_txs: vec![

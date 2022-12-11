@@ -34,6 +34,11 @@ pub enum DbMetadataError {
     #[critical()]
     #[error("Inconsistent db: Invalid SignedPayload in DB")]
     InvalidSignedPayloadInDb,
+
+    /// Attempting to put a new metadata entry without a payload.
+    #[critical()]
+    #[error("Metadata is missing a payload")]
+    MissingMetadataPayload,
 }
 
 use self::DbMetadataError::*;
@@ -59,21 +64,30 @@ impl<'a> DbMetadata<'a> {
         use prost::Message;
         let mut batch = rocksdb::WriteBatch::default();
         if let Some(existing_entry) = self.get(pkh)? {
+            let payload = existing_entry
+                .payload()
+                .as_ref()
+                .ok_or(InvalidSignedPayloadInDb)?;
             // Note: This can sometimes result in a race condition, leaving a redundant and stale
             // entry in "pkh_by_time". We handle this by ignoring stale entries elsewhere.
             let time_pkh = TimePkh {
-                timestamp: existing_entry.payload().timestamp,
+                timestamp: payload.timestamp,
                 pkh: pkh.clone(),
             };
             batch.delete_cf(self.cf_pkh_by_time, &time_pkh.to_storage_bytes());
         }
+        let new_payload = metadata_entry
+            .payload()
+            .as_ref()
+            .ok_or(MissingMetadataPayload)?;
+
         batch.put_cf(
             self.cf_metadata,
             &pkh.to_storage_bytes(),
             &metadata_entry.to_proto().encode_to_vec(),
         );
         let time_pkh = TimePkh {
-            timestamp: metadata_entry.payload().timestamp,
+            timestamp: new_payload.timestamp,
             pkh: pkh.clone(),
         };
         batch.put_cf(self.cf_pkh_by_time, time_pkh.to_storage_bytes(), &[]);

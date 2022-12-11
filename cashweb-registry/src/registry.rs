@@ -110,6 +110,16 @@ pub enum RegistryError {
         /// Malleated tx hex with different input signatures.
         actual: String,
     },
+
+    /// Payload missing in DB.
+    #[invalid_user_input()]
+    #[error("Missing payload in existing metadata record (internal error)")]
+    ExistingPayloadMissing,
+
+    /// Payload missing in DB.
+    #[invalid_user_input()]
+    #[error("Missing payload in metadata record")]
+    PayloadMissing,
 }
 
 use self::RegistryError::*;
@@ -159,6 +169,8 @@ impl Registry {
         let signed_metadata =
             SignedPayload::<proto::AddressMetadata>::parse_proto(signed_metadata)?;
 
+        let new_payload = signed_metadata.payload().as_ref().ok_or(PayloadMissing)?;
+
         // Check pubkey hash
         let actual_pkh = pkh.algorithm().hash_pubkey(*signed_metadata.pubkey());
         if pkh != actual_pkh {
@@ -173,6 +185,10 @@ impl Registry {
         signed_metadata.verify(&self.ecc, ADDRESS_METADATA_LOKAD_ID)?;
 
         if let Some(existing_metadata) = self.get_metadata_pkh(&pkh)? {
+            let existing_payload = existing_metadata
+                .payload()
+                .as_ref()
+                .ok_or(ExistingPayloadMissing)?;
             // If existing payload hash is the same as the new payload hash,
             // we don't need to verify anything.
             if signed_metadata.payload_hash() == existing_metadata.payload_hash() {
@@ -187,10 +203,10 @@ impl Registry {
                 });
             }
             // Timestamp needs to be ascending.
-            if existing_metadata.payload().timestamp >= signed_metadata.payload().timestamp {
+            if existing_payload.timestamp >= new_payload.timestamp {
                 return Err(TimestampNotMonotonicallyIncreasing {
-                    previous: existing_metadata.payload().timestamp,
-                    next: signed_metadata.payload().timestamp,
+                    previous: existing_payload.timestamp,
+                    next: new_payload.timestamp,
                 }
                 .into());
             }
@@ -330,7 +346,8 @@ impl Registry {
                 Some(metadata) => metadata,
                 None => continue, // ignore stale metadata (should be impossible but doesn't matter)
             };
-            if metadata.payload().timestamp != time_pkh.timestamp {
+            let payload = metadata.payload().as_ref();
+            if payload.is_some() && payload.unwrap().timestamp != time_pkh.timestamp {
                 continue; // ignore stale metadata
             }
             entries.push((time_pkh.pkh.to_address(self.net), metadata));

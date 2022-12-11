@@ -216,6 +216,10 @@ impl Peers {
                 println!("Fetched {} entries from {}", entries.len(), peer.url());
             }
             for (address, signed_metadata) in entries {
+                if signed_metadata.payload().is_none() {
+                    continue;
+                }
+                let signed_payload = signed_metadata.payload().as_ref().unwrap();
                 is_all_empty = false;
                 let mut peer_state = peer.state.lock().await;
                 match params
@@ -236,7 +240,7 @@ impl Peers {
                         continue;
                     }
                 }
-                match signed_metadata.payload().timestamp.cmp(last_timestamp) {
+                match signed_payload.timestamp.cmp(last_timestamp) {
                     Ordering::Less => {}
                     Ordering::Equal => {
                         let last_pkh =
@@ -247,7 +251,7 @@ impl Peers {
                         }
                     }
                     Ordering::Greater => {
-                        *last_timestamp = signed_metadata.payload().timestamp;
+                        *last_timestamp = signed_payload.timestamp;
                         *last_address = address;
                     }
                 }
