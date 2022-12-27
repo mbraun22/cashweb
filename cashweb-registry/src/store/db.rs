@@ -15,6 +15,7 @@ pub(crate) const CF_METADATA: &str = "metadata";
 pub(crate) const CF_PKH_BY_TIME: &str = "pkh_by_time";
 pub(crate) const CF_MESSAGES: &str = "topic_messages";
 pub(crate) const CF_PAYLOADS: &str = "message_payloads";
+pub(crate) const CF_TOPIC_BURNS: &str = "topic_burn_txs";
 
 pub(crate) type CF = rocksdb::ColumnFamily;
 
