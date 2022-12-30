@@ -235,7 +235,6 @@ impl<'a> DbTopics<'a> {
     }
 
     /// Get a vector of messages starting at some unix timestamp.
-    /// TODO: actually use this
     pub fn get_messages(&self, topic: &str, from: i64) -> Result<Vec<TopicPayload>> {
         self.get_messages_to(topic, from, i64::MAX)
     }

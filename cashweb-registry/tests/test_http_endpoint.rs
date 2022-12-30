@@ -2,9 +2,10 @@ use std::ffi::OsString;
 
 use bitcoinsuite_bitcoind::instance::{BitcoindChain, BitcoindConf};
 use bitcoinsuite_core::{
-    ecc::Ecc, lotus_txid, BitcoinCode, Hashed, LotusAddress, Net, Network, P2PKHSignatory, Script,
+    ecc::{Ecc, SecKey},
+    lotus_txid, BitcoinCode, Hashed, LotusAddress, Net, Network, OutPoint, P2PKHSignatory, Script,
     SequenceNo, Sha256, ShaRmd160, SigHashType, SignData, SignField, TxBuilder, TxBuilderInput,
-    TxBuilderOutput, TxInput, TxOutput, LOTUS_PREFIX,
+    TxBuilderOutput, TxInput, TxOutput, UnhashedTx, LOTUS_PREFIX,
 };
 use bitcoinsuite_ecc_secp256k1::EccSecp256k1;
 use bitcoinsuite_error::Result;
@@ -13,7 +14,8 @@ use bitcoinsuite_test_utils_blockchain::setup_bitcoind_coins;
 use cashweb_http_utils::protobuf::CONTENT_TYPE_PROTOBUF;
 use cashweb_payload::{
     payload::SignatureScheme,
-    verify::{build_commitment_script, ADDRESS_METADATA_LOKAD_ID},
+    proto::SignedPayloadSet,
+    verify::{build_commitment_script, ADDRESS_METADATA_LOKAD_ID, BROADCAST_MESSAGE_LOKAD_ID},
 };
 use cashweb_registry::{proto, test_instance::RegistryTestInstance};
 use pretty_assertions::assert_eq;
@@ -448,6 +450,141 @@ async fn test_registry_http() -> Result<()> {
     Ok(())
 }
 
+#[tokio::test]
+async fn test_topics_http() -> Result<()> {
+    let _ = bitcoinsuite_error::install();
+    let tempdir = tempdir::TempDir::new("cashweb-registry--registry")?;
+
+    let conf = BitcoindConf::from_chain_regtest(
+        bin_folder(),
+        BitcoindChain::XPI,
+        vec![OsString::from("-txindex")],
+    )?;
+
+    let mut instance = RegistryTestInstance::setup(tempdir.path(), conf, vec![]).await?;
+    instance.wait_for_ready().await?;
+    let ecc = EccSecp256k1::default();
+    let seckey = ecc.seckey_from_array([5; 32])?;
+    let pubkey = ecc.derive_pubkey(&seckey);
+    let pkh = ShaRmd160::digest(pubkey.array().into());
+    let address = LotusAddress::new("lotus", Net::Regtest, Script::p2pkh(&pkh));
+
+    // Get some coins so we can send a message
+    let mut utxos = setup_bitcoind_coins(
+        instance.bitcoind.cli(),
+        Network::XPI,
+        3,
+        address.as_str(),
+        &address.script().hex(),
+    )?;
+
+    let client = reqwest::Client::new();
+    let url = instance.url.clone();
+
+    // Test getting a few messages before anything is posted.
+    let response = client.get(format!("{}/messages/", url)).send().await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.content_length(), Some(0));
+
+    let response = client.get(format!("{}/messages/foo", url)).send().await?;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.content_length(), Some(0));
+
+    // Test sending a message
+    let broadcast_message = proto::BroadcastMessage {
+        timestamp: 1234,
+        topic: "your.mom".to_string(),
+        entries: vec![],
+    };
+    let (payload_one, tx) = build_signed_message(&ecc, &seckey, &mut utxos, broadcast_message)?;
+    let response = client
+        .put(format!("{}/message", url))
+        .body(payload_one.encode_to_vec())
+        .header(CONTENT_TYPE, CONTENT_TYPE_PROTOBUF)
+        .header(ORIGIN, "http://localhost")
+        .send()
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut body = response.bytes().await?;
+    let broadcast_response = proto::PutSignedPayloadResponse::decode(&mut body)?;
+    assert_eq!(
+        broadcast_response,
+        proto::PutSignedPayloadResponse {
+            txid: vec![lotus_txid(&tx).as_slice().to_vec()],
+        },
+    );
+
+    // Get the message and check if it was available.
+    let response = client.get(format!("{}/messages", url)).send().await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut body = response.bytes().await?;
+    let broadcast_response = SignedPayloadSet::decode(&mut body)?;
+    let mut empty_message = payload_one.clone();
+    empty_message.payload = vec![];
+    let message_hash_hex = hex::encode(&empty_message.payload_hash);
+    assert_eq!(
+        broadcast_response,
+        SignedPayloadSet {
+            items: vec![empty_message]
+        },
+    );
+
+    // Get the full message payload and check it.
+    let response = client
+        .get(format!("{}/message/{}", url, message_hash_hex))
+        .send()
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut body = response.bytes().await?;
+    let broadcast_response = cashweb_payload::proto::SignedPayload::decode(&mut body)?;
+    assert_eq!(broadcast_response, payload_one);
+
+    // Test sending a second message
+    let broadcast_message = proto::BroadcastMessage {
+        timestamp: 1235,
+        topic: "your.dad".to_string(),
+        entries: vec![],
+    };
+    let (payload_two, tx) = build_signed_message(&ecc, &seckey, &mut utxos, broadcast_message)?;
+    let response = client
+        .put(format!("{}/message", url))
+        .body(payload_two.encode_to_vec())
+        .header(CONTENT_TYPE, CONTENT_TYPE_PROTOBUF)
+        .header(ORIGIN, "http://localhost")
+        .send()
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut body = response.bytes().await?;
+    let broadcast_response = proto::PutSignedPayloadResponse::decode(&mut body)?;
+    assert_eq!(
+        broadcast_response,
+        proto::PutSignedPayloadResponse {
+            txid: vec![lotus_txid(&tx).as_slice().to_vec()],
+        },
+    );
+
+    // See if we can get both messages
+    let response = client.get(format!("{}/messages", url)).send().await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut body = response.bytes().await?;
+    let broadcast_response = SignedPayloadSet::decode(&mut body)?;
+    let mut empty_message_one = payload_one.clone();
+    empty_message_one.payload = vec![];
+    let mut empty_message_two = payload_two.clone();
+    empty_message_two.payload = vec![];
+    assert_eq!(
+        broadcast_response,
+        SignedPayloadSet {
+            items: vec![empty_message_one, empty_message_two]
+        },
+    );
+
+    instance.cleanup()?;
+
+    Ok(())
+}
+
 async fn check_proto_error(
     response: reqwest::Response,
     error_code: &str,
@@ -464,4 +601,72 @@ async fn check_proto_error(
     };
     assert_eq!(actual_error, expected_error);
     Ok(())
+}
+
+fn build_signed_message<T: prost::Message + Default>(
+    ecc: &EccSecp256k1,
+    seckey: &SecKey,
+    utxos: &mut Vec<(OutPoint, i64)>,
+    broadcast_message: T,
+) -> Result<(cashweb_payload::proto::SignedPayload, UnhashedTx)> {
+    let pubkey = ecc.derive_pubkey(seckey);
+    let address = LotusAddress::new(
+        "lotus",
+        Net::Regtest,
+        Script::p2pkh(&ShaRmd160::digest(pubkey.array().into())),
+    );
+    let broadcast_message_vec = broadcast_message.encode_to_vec();
+    let payload_hash = Sha256::digest(broadcast_message_vec.clone().into());
+
+    let (outpoint, value) = utxos.pop().unwrap();
+    let burn_amount = 10_000;
+    let tx_builder = TxBuilder {
+        version: 1,
+        inputs: vec![TxBuilderInput::new(
+            TxInput {
+                prev_out: outpoint,
+                script: Script::default(),
+                sequence: SequenceNo::finalized(),
+                sign_data: Some(SignData::new(vec![
+                    SignField::OutputScript(address.script().clone()),
+                    SignField::Value(value),
+                ])),
+            },
+            Box::new(P2PKHSignatory {
+                seckey: seckey.clone(),
+                pubkey,
+                sig_hash_type: SigHashType::ALL_BIP143,
+            }),
+        )],
+        outputs: vec![
+            TxBuilderOutput::Leftover(address.script().clone()),
+            TxBuilderOutput::Fixed(TxOutput {
+                value: burn_amount,
+                script: build_commitment_script(
+                    BROADCAST_MESSAGE_LOKAD_ID,
+                    pubkey.array(),
+                    &payload_hash,
+                ),
+            }),
+        ],
+        lock_time: 0,
+    };
+    let tx = tx_builder.sign(ecc, 1000, 546)?;
+
+    let signed_message = cashweb_payload::proto::SignedPayload {
+        pubkey: pubkey.array().to_vec(),
+        sig: ecc
+            .sign(&seckey, payload_hash.byte_array().clone())
+            .to_vec(), // invalid sig
+        sig_scheme: SignatureScheme::Ecdsa.into(),
+        payload: broadcast_message_vec,
+        payload_hash: payload_hash.as_slice().to_vec(),
+        burn_amount: burn_amount,
+        burn_txs: vec![cashweb_payload::proto::BurnTx {
+            tx: tx.ser().to_vec(),
+            burn_idx: 1,
+        }],
+    };
+
+    Ok((signed_message, tx))
 }

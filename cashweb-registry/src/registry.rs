@@ -6,12 +6,12 @@ use bitcoinsuite_ecc_secp256k1::EccSecp256k1;
 use bitcoinsuite_error::{ErrorMeta, Result};
 use cashweb_payload::{
     payload::{BurnTx, SignedPayload},
-    verify::ADDRESS_METADATA_LOKAD_ID,
+    verify::{ADDRESS_METADATA_LOKAD_ID, BROADCAST_MESSAGE_LOKAD_ID},
 };
 use thiserror::Error;
 
 use crate::{
-    proto,
+    proto::{self, BroadcastMessage},
     store::{db::Db, pubkeyhash::PubKeyHash},
 };
 
@@ -61,6 +61,17 @@ pub enum PutBlockchainAction {
     BroadcastRaceCondition,
     /// Txs not seen on the network yet, and we were able to broadcast them successfully.
     Broadcast,
+}
+
+/// Result of putting a topic message into the registry.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PutMessageResult {
+    /// Transaction IDs of the burn txs for this payload.
+    pub txids: Vec<Sha256d>,
+    /// Which action happened with the blockchain.
+    pub blockchain_action: PutBlockchainAction,
+    /// Parsed signed payload.
+    pub signed_message: SignedPayload<proto::BroadcastMessage>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -120,6 +131,11 @@ pub enum RegistryError {
     #[invalid_user_input()]
     #[error("Missing payload in metadata record")]
     PayloadMissing,
+
+    /// Value provided for topic is invalid.
+    #[invalid_user_input()]
+    #[error("Value provided for topic is invalid")]
+    InvalidTopicFormat,
 }
 
 use self::RegistryError::*;
@@ -365,6 +381,77 @@ impl Registry {
         }
     }
 
+    pub(crate) fn get_messages(
+        &self,
+        topic: &str,
+        from: i64,
+        to: i64,
+    ) -> Result<Vec<cashweb_payload::payload::SignedPayload<BroadcastMessage>>> {
+        Ok(self.db.topics().get_messages_to(topic, from, to)?)
+    }
+
+    pub(crate) fn get_message(
+        &self,
+        payload_hash: Vec<u8>,
+    ) -> Result<cashweb_payload::payload::SignedPayload<BroadcastMessage>> {
+        Ok(self.db.topics().get_message(&payload_hash)?)
+    }
+
+    pub(crate) async fn put_message(
+        &self,
+        signed_message: &cashweb_payload::proto::SignedPayload,
+    ) -> Result<PutMessageResult> {
+        // Time now
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+
+        // Decode SignedPayload
+        let signed_message = SignedPayload::<proto::BroadcastMessage>::parse_proto(signed_message)?;
+
+        // Verify burn amount and signatures check out
+        signed_message.verify(&self.ecc, BROADCAST_MESSAGE_LOKAD_ID)?;
+
+        if let Some(signed_payload) = signed_message.payload() {
+            // In the case where the payload must be specified, we want to validate a
+            // few items. In the case where this is simply a vote, ignore the checks.
+            let topic = &signed_payload.topic;
+            let valid_topic = topic
+                .chars()
+                .all(|c| c.is_lowercase() || c.is_numeric() || c == '.' || c == '-');
+            if !valid_topic {
+                return Err(InvalidTopicFormat.into());
+            }
+
+            let split_topic = topic.split('.').collect::<Vec<&str>>();
+            if split_topic.len() > 10 {
+                return Err(InvalidTopicFormat.into());
+            }
+
+            let invalid_segments = split_topic.iter().any(|segment| segment.is_empty());
+            if invalid_segments {
+                return Err(InvalidTopicFormat.into());
+            }
+        }
+
+        let payload_hash = signed_message.payload_hash().as_slice();
+        let (txids, blockchain_action) = self.validate_burn_txs(signed_message.txs()).await?;
+
+        let topics_db = self.db.topics();
+        if signed_message.payload().is_none() && !topics_db.does_message_exist(payload_hash) {
+            return Err(PayloadMissing.into());
+        }
+
+        self.db.topics().put_message(timestamp, &signed_message)?;
+
+        Ok(PutMessageResult {
+            txids,
+            blockchain_action,
+            signed_message,
+        })
+    }
+
     pub(crate) fn net(&self) -> Net {
         self.net
     }
@@ -387,7 +474,10 @@ mod tests {
     use bitcoinsuite_test_utils_blockchain::{build_tx, setup_bitcoind_coins};
     use cashweb_payload::{
         payload::{ParseSignedPayloadError, SignatureScheme, SignedPayload},
-        verify::{build_commitment_script, ValidateSignedPayloadError, ADDRESS_METADATA_LOKAD_ID},
+        verify::{
+            build_commitment_script, ValidateSignedPayloadError, ADDRESS_METADATA_LOKAD_ID,
+            BROADCAST_MESSAGE_LOKAD_ID,
+        },
     };
     use pretty_assertions::assert_eq;
     use prost::Message;
@@ -395,7 +485,8 @@ mod tests {
     use crate::{
         proto,
         registry::{
-            GetMetadataRangeResult, PutBlockchainAction, PutMetadataResult, Registry, RegistryError,
+            GetMetadataRangeResult, PutBlockchainAction, PutMessageResult, PutMetadataResult,
+            Registry, RegistryError,
         },
         store::{
             db::{Db, CF_PKH_BY_TIME},
@@ -945,6 +1036,286 @@ mod tests {
         // Stale entry gets ignored
         let items = registry.get_metadata_range(0, None, None, 10)?;
         assert_eq!(items, index_entries(&[0, 4, 2, 5]));
+
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_registy_topics() -> Result<()> {
+        let _ = bitcoinsuite_error::install();
+        let tempdir = tempdir::TempDir::new("cashweb-registry--registry")?;
+        let db = Db::open(tempdir.path().join("db.rocksdb"))?;
+
+        let conf = BitcoindConf::from_chain_regtest(
+            bin_folder(),
+            BitcoindChain::XPI,
+            vec![OsString::from("-txindex")],
+        )?;
+        let mut instance = BitcoindInstance::setup(conf)?;
+        instance.wait_for_ready()?;
+        let bitcoind = instance.rpc_client();
+
+        let registry = Registry {
+            db,
+            ecc: EccSecp256k1::default(),
+            bitcoind: bitcoind.clone(),
+            net: Net::Regtest,
+        };
+
+        let seckey = registry.ecc.seckey_from_array([4; 32])?;
+        let pubkey = registry.ecc.derive_pubkey(&seckey);
+        let address = LotusAddress::new(
+            "lotus",
+            Net::Regtest,
+            Script::p2pkh(&ShaRmd160::digest(pubkey.array().into())),
+        );
+
+        let mut utxos = setup_bitcoind_coins(
+            instance.cli(),
+            Network::XPI,
+            100,
+            address.as_str(),
+            &address.script().hex(),
+        )?;
+
+        // Tx parses, but the output burn_index points to doesn't exist
+        let broadcast_message = proto::BroadcastMessage {
+            timestamp: 1234,
+            topic: "your.mom".to_string(),
+            entries: vec![],
+        };
+        let broadcast_message_vec = broadcast_message.encode_to_vec();
+        let payload_hash = Sha256::digest(broadcast_message_vec.clone().into());
+        let mut tx = UnhashedTx {
+            version: 1,
+            inputs: vec![],
+            outputs: vec![TxOutput {
+                value: 1_000_000,
+                script: build_commitment_script(
+                    BROADCAST_MESSAGE_LOKAD_ID,
+                    pubkey.array(),
+                    &payload_hash,
+                ),
+            }],
+            lock_time: 0,
+        };
+        let mut signed_message = cashweb_payload::proto::SignedPayload {
+            pubkey: pubkey.array().to_vec(),
+            sig: vec![], // invalid sig
+            sig_scheme: SignatureScheme::Ecdsa.into(),
+            payload: vec![77, 88, 99], // invalid payload
+            payload_hash: vec![],
+            burn_amount: 1_000_000,
+            burn_txs: vec![cashweb_payload::proto::BurnTx {
+                tx: tx.ser().to_vec(),
+                burn_idx: 0,
+            }],
+        };
+        // Invalid protobuf (checked in SignedPayload::from_proto)
+        let err = registry
+            .put_message(&signed_message)
+            .await
+            .unwrap_err()
+            .downcast::<ParseSignedPayloadError>()?;
+        assert_eq!(
+            err,
+            ParseSignedPayloadError::ParsingPayloadFailed(prost::DecodeError::new(
+                "buffer underflow"
+            )),
+        );
+        // Invalid signature (checked in SignedPayload::verify)
+        signed_message.payload = broadcast_message_vec;
+        let err = registry
+            .put_message(&signed_message)
+            .await
+            .unwrap_err()
+            .downcast::<ValidateSignedPayloadError>()?;
+        assert_eq!(
+            err,
+            ValidateSignedPayloadError::InvalidEcdsaSignature(VerifySignatureError::InvalidFormat),
+        );
+        // Valid signature, but no input on transaction
+        signed_message.sig = registry
+            .ecc
+            .sign(&seckey, payload_hash.byte_array().clone())
+            .to_vec();
+        let err = registry
+            .put_message(&signed_message)
+            .await
+            .unwrap_err()
+            .downcast::<RegistryError>()?;
+
+        assert_eq!(
+            err,
+            RegistryError::BitcoindRejectedTx("bad-txns-vin-empty".to_string()),
+        );
+        // Add valid input to tx
+        let (outpoint, value) = utxos.pop().unwrap();
+        let burn_amount = value - 10_000;
+        tx.outputs[0].value = burn_amount;
+        let mut tx_builder = TxBuilder::from_tx(tx);
+        tx_builder.inputs.push(TxBuilderInput::new(
+            TxInput {
+                prev_out: outpoint,
+                script: Script::default(),
+                sequence: SequenceNo::finalized(),
+                sign_data: Some(SignData::new(vec![
+                    SignField::OutputScript(address.script().clone()),
+                    SignField::Value(value),
+                ])),
+            },
+            Box::new(P2PKHSignatory {
+                seckey: seckey.clone(),
+                pubkey,
+                sig_hash_type: SigHashType::ALL_BIP143,
+            }),
+        ));
+        let tx = tx_builder.sign(&registry.ecc, 1000, 546)?;
+        signed_message.burn_txs[0].tx = tx.ser().to_vec();
+        signed_message.burn_amount = burn_amount;
+        // Now, putting the message succeeds
+        let result = registry.put_message(&signed_message).await?;
+        assert_eq!(
+            result,
+            PutMessageResult {
+                txids: vec![lotus_txid(&tx)],
+                blockchain_action: PutBlockchainAction::Broadcast,
+                signed_message: SignedPayload::parse_proto(&signed_message)?,
+            }
+        );
+        let mut message_one = registry.get_message(payload_hash.as_slice().to_vec())?;
+        assert_eq!(
+            message_one,
+            SignedPayload::parse_proto(&signed_message)?,
+            "Payloads do not match {:?}, {:?}",
+            message_one,
+            signed_message.payload_hash.clone()
+        );
+        // Putting the exact same message again works, the node already knows the payload hash.
+        let result = registry.put_message(&signed_message).await?;
+        assert_eq!(
+            result,
+            PutMessageResult {
+                txids: vec![lotus_txid(&tx)],
+                blockchain_action: PutBlockchainAction::AlreadyKnowTx,
+                signed_message: SignedPayload::parse_proto(&signed_message)?,
+            }
+        );
+        let mut build_signed_message = |broadcast_message: proto::BroadcastMessage| -> Result<_> {
+            let mut signed_message = signed_message.clone();
+
+            signed_message.payload = broadcast_message.encode_to_vec();
+            let payload_hash = Sha256::digest(signed_message.payload.clone().into());
+            signed_message.payload_hash = payload_hash.as_slice().to_vec();
+            signed_message.sig = registry
+                .ecc
+                .sign(&seckey, payload_hash.byte_array().clone())
+                .to_vec();
+
+            let (outpoint, value) = utxos.pop().unwrap();
+            let burn_amount = 10_000;
+            let tx_builder = TxBuilder {
+                version: 1,
+                inputs: vec![TxBuilderInput::new(
+                    TxInput {
+                        prev_out: outpoint,
+                        script: Script::default(),
+                        sequence: SequenceNo::finalized(),
+                        sign_data: Some(SignData::new(vec![
+                            SignField::OutputScript(address.script().clone()),
+                            SignField::Value(value),
+                        ])),
+                    },
+                    Box::new(P2PKHSignatory {
+                        seckey: seckey.clone(),
+                        pubkey,
+                        sig_hash_type: SigHashType::ALL_BIP143,
+                    }),
+                )],
+                outputs: vec![
+                    TxBuilderOutput::Leftover(address.script().clone()),
+                    TxBuilderOutput::Fixed(TxOutput {
+                        value: burn_amount,
+                        script: build_commitment_script(
+                            BROADCAST_MESSAGE_LOKAD_ID,
+                            pubkey.array(),
+                            &payload_hash,
+                        ),
+                    }),
+                ],
+                lock_time: 0,
+            };
+            signed_message.burn_amount = burn_amount;
+            let tx = tx_builder.sign(&registry.ecc, 1000, 546)?;
+            signed_message.burn_txs[0].tx = tx.ser().to_vec();
+            signed_message.burn_txs[0].burn_idx = 1;
+            Ok((signed_message, tx))
+        };
+        let (signed_message, tx) = build_signed_message(proto::BroadcastMessage {
+            timestamp: 1236,
+            topic: "your.mom".to_string(),
+            entries: vec![],
+        })?;
+        // pre-broadcast tx works
+        bitcoind
+            .cmd_text("sendrawtransaction", &[tx.ser().hex().into()])
+            .await?;
+        // Mine block: This would make another "sendrawtransaction" of `tx` fail.
+        bitcoind
+            .cmd_text("generatetoaddress", &[1i32.into(), address.as_str().into()])
+            .await?;
+        let result = registry.put_message(&signed_message).await?;
+        assert_eq!(
+            result,
+            PutMessageResult {
+                txids: vec![lotus_txid(&tx)],
+                blockchain_action: PutBlockchainAction::AlreadyKnowTx,
+                signed_message: SignedPayload::parse_proto(&signed_message)?,
+            }
+        );
+        let mut message_two = registry.get_message(signed_message.payload_hash.clone())?;
+        assert_eq!(message_two, SignedPayload::parse_proto(&signed_message)?,);
+        // Malleate tx, will result in the same txid, but diffrent raw tx hex
+        let (signed_message, tx) = build_signed_message(proto::BroadcastMessage {
+            timestamp: 1237,
+            topic: "your.mom".to_string(),
+            entries: vec![],
+        })?;
+        bitcoind
+            .cmd_text("sendrawtransaction", &[tx.ser().hex().into()])
+            .await?;
+        let old_tx = tx.clone();
+        let mut tx_builder = TxBuilder::from_tx(tx);
+        *tx_builder.inputs[0].signatory_mut() = Some(Box::new(P2PKHSignatory {
+            seckey: seckey.clone(),
+            pubkey,
+            sig_hash_type: SigHashType::ALL_BIP143,
+        }));
+        let tx = tx_builder.sign(&registry.ecc, 1000, 546)?;
+        assert_ne!(old_tx, tx);
+        let mut malleated_message = signed_message.clone();
+        malleated_message.burn_txs[0].tx = tx.ser().to_vec();
+        let err = registry
+            .put_message(&malleated_message)
+            .await
+            .unwrap_err()
+            .downcast::<RegistryError>()?;
+        assert_eq!(
+            err,
+            RegistryError::TxMalleated {
+                expected: old_tx.ser().hex(),
+                actual: tx.ser().hex(),
+            },
+        );
+
+        message_one.clear_payload();
+        message_two.clear_payload();
+
+        // Test getting messages that were sent.
+        let messages = registry.get_messages("", 0, i64::MAX)?;
+        assert_eq!(messages, vec![message_one, message_two]);
+
+        instance.cleanup()?;
 
         Ok(())
     }

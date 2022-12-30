@@ -38,6 +38,9 @@ reqwest = "0.11"
 # Fast embedded key-value database
 rocksdb = "0.19"
 
+# For Deserialize
+serde = "1.0.147"
+
 # Derive error enums
 thiserror = "1.0"
 

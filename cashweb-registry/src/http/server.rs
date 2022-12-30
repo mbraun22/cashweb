@@ -11,14 +11,22 @@ use axum::{
 use bitcoinsuite_core::{Hashed, LotusAddress, LotusAddressError};
 use bitcoinsuite_error::{ErrorMeta, Result};
 use cashweb_http_utils::protobuf::Protobuf;
+use cashweb_payload::proto::SignedPayloadSet;
+use serde::Deserialize;
 use thiserror::Error;
 
 use crate::{
     http::error::HttpRegistryError,
     p2p::{peers::Peers, relay_info::RelayInfo},
-    proto,
+    proto::{self},
     registry::{PutMetadataResult, Registry},
 };
+
+#[derive(Deserialize)]
+struct MessagesQuery {
+    from: Option<i64>,
+    to: Option<i64>,
+}
 
 /// Provides endpoints to read and write from the Cashweb Registry.
 #[derive(Debug, Clone)]
@@ -78,6 +86,22 @@ impl RegistryServer {
                 routing::put(handle_put_registry)
                     .get(handle_get_registry)
                     .options(handle_post_options),
+            )
+            .route(
+                "/messages/:topic",
+                routing::get(handle_get_messages).options(handle_post_options),
+            )
+            .route(
+                "/messages",
+                routing::get(handle_get_all_messages).options(handle_post_options),
+            )
+            .route(
+                "/message",
+                routing::put(handle_put_message).options(handle_post_options),
+            )
+            .route(
+                "/message/:payload_hash",
+                routing::get(handle_get_message).options(handle_post_options),
             )
             .layer(Extension(self))
     }
@@ -215,6 +239,74 @@ async fn handle_get_metadata_range(
                 address: address.as_str().to_string(),
                 signed_payload: Some(signed_payload.to_proto()),
             })
+            .collect(),
+    }))
+}
+
+async fn handle_get_messages(
+    Path(topic): Path<String>,
+    Query(params): Query<MessagesQuery>,
+    Extension(server): Extension<RegistryServer>,
+) -> Result<Protobuf<cashweb_payload::proto::SignedPayloadSet>, HttpRegistryError> {
+    let from = params.from.unwrap_or_default();
+    let to = params.to.unwrap_or(i64::MAX);
+
+    let signed_payloads = server
+        .registry
+        .get_messages(topic.as_str(), from, to)?
+        .iter()
+        .map(|signed_payload| signed_payload.to_proto())
+        .collect();
+
+    let payload_page = SignedPayloadSet {
+        items: signed_payloads,
+    };
+
+    Ok(Protobuf(payload_page))
+}
+
+async fn handle_get_all_messages(
+    Query(params): Query<MessagesQuery>,
+    Extension(server): Extension<RegistryServer>,
+) -> Result<Protobuf<cashweb_payload::proto::SignedPayloadSet>, HttpRegistryError> {
+    let from = params.from.unwrap_or_default();
+    let to = params.to.unwrap_or(i64::MAX);
+
+    let signed_payloads = server
+        .registry
+        .get_messages("", from, to)?
+        .iter()
+        .map(|signed_payload| signed_payload.to_proto())
+        .collect();
+
+    let payload_page = SignedPayloadSet {
+        items: signed_payloads,
+    };
+
+    Ok(Protobuf(payload_page))
+}
+
+async fn handle_get_message(
+    Path(hex_hash): Path<String>,
+    Extension(server): Extension<RegistryServer>,
+) -> Result<Protobuf<cashweb_payload::proto::SignedPayload>, HttpRegistryError> {
+    let payload_hash = hex::decode(&hex_hash).map_err(|err| HttpRegistryError(err.into()))?;
+    let message = server.registry.get_message(payload_hash)?;
+
+    Ok(Protobuf(message.to_proto()))
+}
+
+async fn handle_put_message(
+    Protobuf(message): Protobuf<cashweb_payload::proto::SignedPayload>,
+    Extension(server): Extension<RegistryServer>,
+) -> Result<Protobuf<proto::PutSignedPayloadResponse>, HttpRegistryError> {
+    let result = server.registry.put_message(&message).await?;
+
+    Ok(Protobuf(proto::PutSignedPayloadResponse {
+        txid: result
+            .txids
+            .into_iter()
+            .map(|txid| txid.as_slice().to_vec())
             .collect(),
     }))
 }

@@ -11,6 +11,8 @@ use crate::payload::{SignatureScheme, SignedPayload};
 
 /// LOKAD ID of commitment burns for address metadata
 pub const ADDRESS_METADATA_LOKAD_ID: [u8; 4] = *b"STMP";
+/// LOKAD ID of commitment burns for topic posts
+pub const BROADCAST_MESSAGE_LOKAD_ID: [u8; 4] = *b"POND";
 
 /// Opcode that indicates the version of the commitment.
 pub const COMMITMENT_VERSION_OPCODE: u8 = 0x51;

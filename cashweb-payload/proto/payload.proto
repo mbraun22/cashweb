@@ -47,3 +47,9 @@ message BurnTx {
     // the signed payload.
     uint32 burn_idx = 2;
 }
+
+// Set of auth wrappers for returning multiple items to the client as needed.
+message SignedPayloadSet {
+    // Set of auth wrappers that can be used in certain get responses
+    repeated SignedPayload items = 1;
+}
