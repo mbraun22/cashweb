@@ -18,13 +18,21 @@ pub use crate::proto::signed_payload::SignatureScheme;
 /// providing a standard structure for covering a payload with a signature.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SignedPayload<T> {
+    /// Optional deserialized payload of type T.
     pub(crate) payload: Option<T>,
+    /// Pubkey of who signed the payload
     pub(crate) pubkey: [u8; PUBKEY_LENGTH],
+    /// Actual signature bytes
     pub(crate) sig: Bytes,
+    /// Signature scheme (e.g ECDSA/Schnorr)
     pub(crate) sig_scheme: SignatureScheme,
+    /// Raw payload bytes from deserialization
     pub(crate) payload_raw: Option<Bytes>,
+    /// Hash of payload. Either set by user, or generated on deserialization
     pub(crate) payload_hash: Sha256,
+    /// Total amount of burn in the burn_txs.
     pub(crate) burn_amount: i64,
+    /// Serialized transactions with indices to their OP_RETURN burn outputs.
     pub(crate) burn_txs: Vec<BurnTx>,
 }
 
@@ -236,6 +244,12 @@ impl<T: prost::Message + Default> SignedPayload<T> {
                 })
                 .collect(),
         }
+    }
+
+    /// Clears the payload data. May be useful for test, or serializing/deserializing in some cases
+    pub fn clear_payload(&mut self) {
+        self.payload = None;
+        self.payload_raw = None;
     }
 
     /// Public key signing for this payload.
