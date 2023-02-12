@@ -94,6 +94,11 @@ impl RegistryTestInstance {
     }
 }
 
+impl Drop for RegistryTestInstance {
+    fn drop(&mut self) {
+        self.bitcoind.cleanup().ok();
+    }
+}
 /// Build a [`cashweb_payload::proto::SignedPayload`] for testing.
 pub fn build_signed_metadata(
     seckey: &SecKey,
