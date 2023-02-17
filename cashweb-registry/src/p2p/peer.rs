@@ -96,7 +96,7 @@ impl Peer {
 
     /// Relay the PUT metadata request to the peer.
     /// Skips sending if request originated from this peer, or if it (probably) already knows it.
-    pub async fn relay_to(
+    pub async fn relay_metadata_to(
         &self,
         relay_info: &RelayInfo,
         request: &PutMetadataRequest,
@@ -399,7 +399,7 @@ mod tests {
             origin: url.clone(),
         };
         let relay_action = peer
-            .relay_to(&relay_info, &request, &signed_metadata, own_origin, &client)
+            .relay_metadata_to(&relay_info, &request, &signed_metadata, own_origin, &client)
             .await;
         assert_eq!(relay_action, RelayAction::SkippedOrigin);
 
@@ -408,13 +408,13 @@ mod tests {
             origin: "http://anywhere.com".parse()?,
         };
         let relay_action = peer
-            .relay_to(&relay_info, &request, &signed_metadata, own_origin, &client)
+            .relay_metadata_to(&relay_info, &request, &signed_metadata, own_origin, &client)
             .await;
         assert_eq!(relay_action, RelayAction::KnowsPayload);
 
         let offline_peer = Peer::new(offline_url.clone());
         let relay_action = offline_peer
-            .relay_to(&relay_info, &request, &signed_metadata, own_origin, &client)
+            .relay_metadata_to(&relay_info, &request, &signed_metadata, own_origin, &client)
             .await;
         assert_eq!(relay_action, RelayAction::SendError);
         {
@@ -440,7 +440,7 @@ mod tests {
             signed_metadata: cashweb_payload::proto::SignedPayload::default(),
         };
         let relay_action = peer
-            .relay_to(
+            .relay_metadata_to(
                 &relay_info,
                 &invalid_request,
                 &signed_metadata,
@@ -466,7 +466,7 @@ mod tests {
             signed_metadata: cashweb_payload::proto::SignedPayload::default(),
         };
         let relay_action = peer
-            .relay_to(
+            .relay_metadata_to(
                 &relay_info,
                 &valid_request,
                 &signed_metadata,
@@ -487,7 +487,7 @@ mod tests {
 
         // Trying to relaying again hits bloom filter
         let relay_action = peer
-            .relay_to(
+            .relay_metadata_to(
                 &relay_info,
                 &valid_request,
                 &signed_metadata,

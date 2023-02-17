@@ -44,7 +44,7 @@ impl Peers {
         signed_metadata: &SignedPayload<proto::AddressMetadata>,
     ) {
         futures::future::join_all(self.peers.iter().map(|peer| {
-            peer.relay_to(
+            peer.relay_metadata_to(
                 relay_info,
                 request,
                 signed_metadata,
