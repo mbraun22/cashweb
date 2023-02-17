@@ -19,7 +19,7 @@ use crate::{
     http::error::HttpRegistryError,
     p2p::{peers::Peers, relay_info::RelayInfo},
     proto::{self},
-    registry::{PutMetadataResult, Registry},
+    registry::Registry,
 };
 
 #[derive(Deserialize)]
@@ -105,25 +105,6 @@ impl RegistryServer {
             )
             .layer(Extension(self))
     }
-
-    async fn put_metadata(&self, request: PutMetadataRequest) -> Result<PutMetadataResult> {
-        let relay_info = RelayInfo::parse_from_headers(&request.header_map)?;
-        let result = self
-            .registry
-            .put_metadata(&request.address, &request.signed_metadata)
-            .await?;
-        // Relay to peers in a separate task
-        tokio::spawn({
-            let signed_metadata = result.signed_metadata.clone();
-            let peers = Arc::clone(&self.peers);
-            async move {
-                peers
-                    .relay_metadata(&relay_info, &request, &signed_metadata)
-                    .await
-            }
-        });
-        Ok(result)
-    }
 }
 
 async fn handle_post_options() -> Result<Response<Body>, HttpRegistryError> {
@@ -145,7 +126,23 @@ async fn handle_put_registry(
         header_map,
         signed_metadata,
     };
-    let result = server.put_metadata(request).await?;
+
+    let relay_info = RelayInfo::parse_from_headers(&request.header_map)?;
+    let result = server
+        .registry
+        .put_metadata(&request.address, &request.signed_metadata)
+        .await?;
+    // Relay to peers in a separate task
+    tokio::spawn({
+        let signed_metadata = result.signed_metadata.clone();
+        let peers = Arc::clone(&server.peers);
+        async move {
+            peers
+                .relay_metadata(&relay_info, &request, &signed_metadata)
+                .await
+        }
+    });
+
     Ok(Protobuf(proto::PutSignedPayloadResponse {
         txid: result
             .txids
