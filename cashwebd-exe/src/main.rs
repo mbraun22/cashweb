@@ -1,7 +1,6 @@
 use std::{io::Read, sync::Arc, time::Duration};
 
 use bitcoinsuite_bitcoind::rpc_client::BitcoindRpcClient;
-use bitcoinsuite_core::Net;
 use bitcoinsuite_error::{Result, WrapErr};
 use cashweb_config::parse_conf;
 use cashweb_registry::{
@@ -55,7 +54,7 @@ async fn main() -> Result<()> {
     let db = Db::open(&conf.registry.db_path)?;
     let bitcoind = BitcoindRpcClient::new(conf.bitcoin_rpc);
 
-    let registry = Arc::new(Registry::new(db, bitcoind, Net::Regtest));
+    let registry = Arc::new(Registry::new(db, bitcoind, conf.registry.net));
     let our_peers = conf
         .registry
         .peers
