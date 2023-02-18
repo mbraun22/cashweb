@@ -2,10 +2,16 @@
 
 use std::{collections::HashMap, str::FromStr, sync::Arc};
 
+use crate::{
+    http::error::HttpRegistryError,
+    p2p::{peers::Peers, relay_info::RelayInfo},
+    proto::{self},
+    registry::Registry,
+};
 use axum::{
-    body::Body,
     extract::{Path, Query},
-    http::{HeaderMap, Response},
+    http::HeaderMap,
+    http::{header, Method},
     routing, Extension, Router,
 };
 use bitcoinsuite_core::{Hashed, LotusAddress, LotusAddressError};
@@ -14,13 +20,7 @@ use cashweb_http_utils::protobuf::Protobuf;
 use cashweb_payload::proto::SignedPayloadSet;
 use serde::Deserialize;
 use thiserror::Error;
-
-use crate::{
-    http::error::HttpRegistryError,
-    p2p::{peers::Peers, relay_info::RelayInfo},
-    proto::{self},
-    registry::Registry,
-};
+use tower_http::cors::{Any, CorsLayer};
 
 #[derive(Deserialize)]
 struct MessagesQuery {
@@ -83,35 +83,27 @@ impl RegistryServer {
             .route("/metadata", routing::get(handle_get_metadata_range))
             .route(
                 "/metadata/:addr",
-                routing::put(handle_put_registry)
-                    .get(handle_get_registry)
-                    .options(handle_post_options),
+                routing::put(handle_put_registry).get(handle_get_registry),
             )
-            .route(
-                "/messages/:topic",
-                routing::get(handle_get_messages).options(handle_post_options),
-            )
-            .route(
-                "/messages",
-                routing::get(handle_get_all_messages).options(handle_post_options),
-            )
-            .route(
-                "/message",
-                routing::put(handle_put_message).options(handle_post_options),
-            )
-            .route(
-                "/message/:payload_hash",
-                routing::get(handle_get_message).options(handle_post_options),
-            )
+            .route("/messages/:topic", routing::get(handle_get_messages))
+            .route("/messages", routing::get(handle_get_all_messages))
+            .route("/message", routing::put(handle_put_message))
+            .route("/message/:payload_hash", routing::get(handle_get_message))
             .layer(Extension(self))
+            .layer(
+                CorsLayer::new()
+                    .allow_methods([
+                        Method::GET,
+                        Method::PUT,
+                        Method::POST,
+                        Method::HEAD,
+                        Method::OPTIONS,
+                    ])
+                    .allow_headers([header::CONTENT_TYPE])
+                    // allow requests from any origin
+                    .allow_origin(Any),
+            )
     }
-}
-
-async fn handle_post_options() -> Result<Response<Body>, HttpRegistryError> {
-    Response::builder()
-        .header("Allow", "OPTIONS, HEAD, POST, PUT, GET")
-        .body(axum::body::Body::empty())
-        .map_err(|err| HttpRegistryError(err.into()))
 }
 
 async fn handle_put_registry(
