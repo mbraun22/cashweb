@@ -14,6 +14,8 @@ use cashweb_registry::{
     store::db::Db,
 };
 use thiserror::Error;
+use tracing::info;
+use tracing_subscriber::fmt;
 
 #[derive(Error, Debug)]
 pub enum CashwebdExeError {
@@ -34,6 +36,12 @@ use self::CashwebdExeError::*;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let format = fmt::format()
+        .with_level(true) // don't include levels in formatted output
+        .with_target(false) // don't include targets
+        .compact(); // use the `Compact` formatting style.
+
+    tracing_subscriber::fmt().event_format(format).init();
     bitcoinsuite_error::install()?;
 
     let conf_path = std::env::args().nth(1).ok_or(NoConfigFile)?;
@@ -74,7 +82,7 @@ async fn main() -> Result<()> {
     };
 
     let router = server.into_router();
-
+    info!("Listening on {}", conf.host);
     axum::Server::bind(&conf.host)
         .serve(router.into_make_service())
         .await?;

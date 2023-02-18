@@ -1,7 +1,5 @@
 //! Module containing [`RegistryServer`] to run the registry HTTP server.
 
-use std::{collections::HashMap, str::FromStr, sync::Arc};
-
 use crate::{
     http::error::HttpRegistryError,
     p2p::{peers::Peers, relay_info::RelayInfo},
@@ -10,8 +8,8 @@ use crate::{
 };
 use axum::{
     extract::{Path, Query},
-    http::HeaderMap,
-    http::{header, Method},
+    http::{header, HeaderMap, Method},
+    middleware::from_fn,
     routing, Extension, Router,
 };
 use bitcoinsuite_core::{Hashed, LotusAddress, LotusAddressError};
@@ -19,8 +17,10 @@ use bitcoinsuite_error::{ErrorMeta, Result};
 use cashweb_http_utils::protobuf::Protobuf;
 use cashweb_payload::proto::SignedPayloadSet;
 use serde::Deserialize;
+use std::{collections::HashMap, str::FromStr, sync::Arc};
 use thiserror::Error;
 use tower_http::cors::{Any, CorsLayer};
+use tracing::Level;
 
 #[derive(Deserialize)]
 struct MessagesQuery {
@@ -76,6 +76,29 @@ pub enum RegistryServerError {
 
 use self::RegistryServerError::*;
 
+async fn log_request<B>(
+    request: axum::http::Request<B>,
+    next: axum::middleware::Next<B>,
+) -> axum::response::Response {
+    let method = request.method().to_owned();
+    let uri = request.uri().to_owned();
+    let start = std::time::Instant::now();
+
+    let response = next.run(request).await;
+
+    tracing::event!(
+        Level::INFO,
+        method = method.as_str(),
+        path = uri.path(),
+        // latency = format_args!("{} ms", latency.as_millis()),
+        status = response.status().as_u16(),
+        duration = format!("{} mcs", start.elapsed().as_micros()),
+        "finished processing request"
+    );
+
+    response
+}
+
 impl RegistryServer {
     /// Turn this registry server into a [`Router`].
     pub fn into_router(self) -> Router {
@@ -103,6 +126,7 @@ impl RegistryServer {
                     // allow requests from any origin
                     .allow_origin(Any),
             )
+            .layer(from_fn(log_request))
     }
 }
 
