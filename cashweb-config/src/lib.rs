@@ -13,14 +13,16 @@ use bitcoinsuite_bitcoind::rpc_client::BitcoindRpcClientConf;
 use bitcoinsuite_core::Net;
 use bitcoinsuite_error::Result;
 use serde::Deserialize;
+use validator::Validate;
 
 /// Configuration of a cashwebd instance
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Debug, Validate, Deserialize, Eq, PartialEq,)]
 pub struct CashwebdConf {
     /// Where to bind the cashwebd server to
     pub host: SocketAddr,
     /// Under what URL we advertise ourselves to the outside world
-    pub url: url::Url,
+    #[validate(url)]
+    pub url: String,
     /// Registry configuration
     pub registry: RegistryConf,
     /// Bitcoin JSONRPC configuration
@@ -62,7 +64,13 @@ pub struct InitialMetadataDownloadConf {
 
 /// Parse the configuration file from a string
 pub fn parse_conf(conf_str: &str) -> Result<CashwebdConf> {
+    let conf: CashwebdConf = toml::from_str(conf_str)?;
+    match conf.validate() {
+        Ok(_) => (),
+        Err(e) => panic!(),
+    };
     Ok(toml::from_str(conf_str)?)
+
 }
 
 impl Default for InitialMetadataDownloadConf {
